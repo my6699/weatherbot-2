@@ -1,0 +1,22 @@
+{
+  "templateVersion": 1,
+  "description": "每个城市 D0 当天最高温活跃时间窗口和离场策略参数。新增城市时按此结构添加条目。",
+  "cities": {
+    "shanghai": {
+      "timezone": "Asia/Shanghai",
+      "peakWindow": {
+        "earliest": "11:00",
+        "typical": "12:30",
+        "latest": "14:00"
+      },
+      "exitStrategy": {
+        "softExitBeforePeakHours": 1.5,
+        "hardExitLocalTime": "14:00",
+        "twapSlices": 4,
+        "takeProfitRatio": 0.25,
+        "stopLossRatio": 0.15
+      },
+      "notes": "上海夏季通常午后 13:00-14:00 达到日最高温。两段式平仓：峰值前两桶 bid 之和 >= 0.85 即平仓；峰值最晚 14:00 到点直接按市价全部平仓（不加确认缓冲，峰值确认后市场就走完了）"
+    }
+  }
+}

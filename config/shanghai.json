@@ -1,0 +1,46 @@
+{
+  "city": "shanghai",
+  "timezone": "Asia/Shanghai",
+  "settlementStation": {
+    "stationId": "ZSPD",
+    "name": "Shanghai Pudong International Airport",
+    "lat": 31.1443,
+    "lon": 121.8083
+  },
+  "nearbyStationsFile": "config/stations/zspd_nearby.json",
+  "peakTimeLocal": {
+    "earliest": "11:00",
+    "typical": "12:30",
+    "latest": "14:00"
+  },
+  "buckets": [
+    { "label": "<=30", "minTempC": null, "maxTempC": 30 },
+    { "label": "31", "minTempC": 30, "maxTempC": 31 },
+    { "label": "32", "minTempC": 31, "maxTempC": 32 },
+    { "label": "33", "minTempC": 32, "maxTempC": 33 },
+    { "label": "34", "minTempC": 33, "maxTempC": 34 },
+    { "label": "35", "minTempC": 34, "maxTempC": 35 },
+    { "label": "36", "minTempC": 35, "maxTempC": 36 },
+    { "label": ">=37", "minTempC": 36, "maxTempC": null }
+  ],
+  "spatialCorrection": {
+    "method": "idw",
+    "maxRadiusKm": 50,
+    "minNearbyStations": 3,
+    "idwPower": 2,
+    "gaussianBandwidthKm": 18
+  },
+  "scoringWeights": {
+    "cheapTail": 1.6,
+    "modelShock": 1.2,
+    "orderFlow": 1.0,
+    "spatialSupport": 1.5,
+    "relativeValue": 1.1,
+    "probabilityGap": 1.3,
+    "dispersionPenalty": 1.4
+  },
+  "risk": {
+    "maxPositionUsd": 20,
+    "maxCityExposureUsd": 80
+  }
+}

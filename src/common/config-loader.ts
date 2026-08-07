@@ -1,0 +1,183 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import process from 'node:process';
+import dotenv from 'dotenv';
+import { z } from 'zod';
+import type { CityId, TradingMode } from './types.js';
+
+// 这个文件负责读取配置。
+// 量化系统里不要把参数写死在代码中，因为城市、风控、交易模式、数据源权重都需要经常调整。
+// 这里采用两层配置：
+// 1. .env：放运行环境、Redis、私钥、风控开关等敏感或部署相关配置。
+// 2. config/*.json：放城市专属参数，例如 ZSPD 主站点、周边站点文件、桶范围、打分权重。
+
+dotenv.config();
+
+const tradingModeSchema = z.enum(['paper', 'live']);
+const cityIdSchema = z.enum(['shanghai']);
+
+const envSchema = z.object({
+  NODE_ENV: z.string().default('development'),
+  TRADING_MODE: tradingModeSchema.default('paper'),
+  DEFAULT_CITY: cityIdSchema.default('shanghai'),
+
+  REDIS_URL: z.string().default('redis://127.0.0.1:6379'),
+  REDIS_KEY_PREFIX: z.string().default('weather'),
+  DATA_MAX_AGE_SECONDS: z.coerce.number().positive().default(3600),
+
+  DATAHUB_POLL_INTERVAL_SECONDS: z.coerce.number().positive().default(3600),
+  DATA_SOURCE_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(3),
+
+  POLYMARKET_CLOB_API_URL: z.string().url().default('https://clob.polymarket.com'),
+  POLYMARKET_GAMMA_API_URL: z.string().url().default('https://gamma-api.polymarket.com'),
+  POLYMARKET_PRIVATE_KEY: z.string().default(''),
+  POLYMARKET_FUNDER_ADDRESS: z.string().default(''),
+  POLYMARKET_SIGNATURE_TYPE: z.coerce.number().int().default(0),
+
+  MAX_POSITION_USD: z.coerce.number().positive().default(20),
+  MAX_CITY_EXPOSURE_USD: z.coerce.number().positive().default(80),
+  ENABLE_NO_TRADES: z
+    .string()
+    .default('false')
+    .transform((value) => value.toLowerCase() === 'true'),
+  HARD_EXIT_LOCAL_TIME: z.string().default('14:00'),
+
+  LOG_LEVEL: z.string().default('info'),
+  LOG_DIR: z.string().default('logs'),
+});
+
+const geoPointSchema = z.object({
+  lat: z.number(),
+  lon: z.number(),
+});
+
+const temperatureBucketSchema = z.object({
+  label: z.string(),
+  minTempC: z.number().nullable(),
+  maxTempC: z.number().nullable(),
+});
+
+const scoringWeightsSchema = z.object({
+  cheapTail: z.number().nonnegative(),
+  modelShock: z.number().nonnegative(),
+  orderFlow: z.number().nonnegative(),
+  spatialSupport: z.number().nonnegative(),
+  relativeValue: z.number().nonnegative(),
+  probabilityGap: z.number().nonnegative(),
+  dispersionPenalty: z.number().nonnegative(),
+});
+
+const cityConfigSchema = z.object({
+  city: cityIdSchema,
+  timezone: z.string(),
+  settlementStation: z.object({
+    stationId: z.string(),
+    name: z.string(),
+    lat: z.number(),
+    lon: z.number(),
+  }),
+  nearbyStationsFile: z.string(),
+  peakTimeLocal: z.object({
+    earliest: z.string(),
+    typical: z.string(),
+    latest: z.string(),
+  }),
+  buckets: z.array(temperatureBucketSchema).min(1),
+  spatialCorrection: z.object({
+    method: z.enum(['idw', 'gaussian']),
+    maxRadiusKm: z.number().positive(),
+    minNearbyStations: z.number().int().positive(),
+    idwPower: z.number().positive(),
+    gaussianBandwidthKm: z.number().positive(),
+  }),
+  scoringWeights: scoringWeightsSchema,
+  risk: z.object({
+    maxPositionUsd: z.number().positive(),
+    maxCityExposureUsd: z.number().positive(),
+  }),
+});
+
+export type AppEnv = z.infer<typeof envSchema> & {
+  TRADING_MODE: TradingMode;
+  DEFAULT_CITY: CityId;
+};
+
+export type CityConfig = z.infer<typeof cityConfigSchema>;
+
+export interface AppConfig {
+  env: AppEnv;
+  city: CityConfig;
+  projectRoot: string;
+}
+
+export function loadEnv(): AppEnv {
+  // safeParse 可以返回清晰的校验错误。
+  // 如果 .env 写错，比如 MAX_POSITION_USD=abc，系统会在启动阶段直接报错，而不是带着错误参数运行。
+  const parsed = envSchema.safeParse(process.env);
+
+  if (!parsed.success) {
+    throw new Error(`.env 配置校验失败：${parsed.error.message}`);
+  }
+
+  return parsed.data as AppEnv;
+}
+
+export function getProjectRoot(): string {
+  // 默认从当前工作目录启动项目。
+  // PM2 和 npm scripts 都会在 weather-bot 根目录运行，所以 process.cwd() 是最直接可靠的选择。
+  return process.cwd();
+}
+
+export function loadCityConfig(city: CityId, projectRoot = getProjectRoot()): CityConfig {
+  const configPath = path.join(projectRoot, 'config', `${city}.json`);
+
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`找不到城市配置文件：${configPath}`);
+  }
+
+  const raw = fs.readFileSync(configPath, 'utf8');
+  const json = JSON.parse(raw) as unknown;
+  const parsed = cityConfigSchema.safeParse(json);
+
+  if (!parsed.success) {
+    throw new Error(`${city}.json 配置校验失败：${parsed.error.message}`);
+  }
+
+  return parsed.data;
+}
+
+export function loadAppConfig(city?: CityId): AppConfig {
+  const env = loadEnv();
+  const projectRoot = getProjectRoot();
+  const selectedCity = city ?? env.DEFAULT_CITY;
+
+  return {
+    env,
+    city: loadCityConfig(selectedCity, projectRoot),
+    projectRoot,
+  };
+}
+
+export function resolveConfigPath(projectRoot: string, relativePath: string): string {
+  // JSON 配置里只写相对路径，例如 config/stations/zspd_nearby.json。
+  // 这个函数负责转成绝对路径，避免不同启动目录导致读文件失败。
+  return path.isAbsolute(relativePath) ? relativePath : path.join(projectRoot, relativePath);
+}
+
+export function requireLiveTradingSafety(env: AppEnv): void {
+  // live 模式是实盘，必须检查关键字段。
+  // paper 模式不做这些限制，方便本地和 VPS 先跑模拟盘。
+  if (env.TRADING_MODE !== 'live') {
+    return;
+  }
+
+  if (!env.POLYMARKET_PRIVATE_KEY) {
+    throw new Error('live 模式必须配置 POLYMARKET_PRIVATE_KEY');
+  }
+
+  if (!env.POLYMARKET_FUNDER_ADDRESS) {
+    throw new Error('live 模式必须配置 POLYMARKET_FUNDER_ADDRESS');
+  }
+}
+
+export { cityConfigSchema, envSchema, geoPointSchema };

@@ -1,0 +1,323 @@
+// 这个文件只放“类型定义”，不放具体业务逻辑。
+// 好处是：每个模块都使用同一套数据结构，减少字段名写错、单位混乱、模块之间对不上接口的问题。
+
+export type CityId = 'shanghai';
+
+export type TradingMode = 'paper' | 'live';
+
+export type ForecastHorizon = 'd3' | 'd2' | 'd1' | 'd0';
+
+export type TradeSide = 'YES' | 'NO';
+
+export type OrderSide = 'BUY' | 'SELL';
+
+export type DataSourceStatus = 'healthy' | 'degraded' | 'disabled';
+
+export interface GeoPoint {
+  // 纬度，例如 ZSPD 浦东机场约为 31.1443
+  lat: number;
+
+  // 经度，例如 ZSPD 浦东机场约为 121.8083
+  lon: number;
+}
+
+export interface WeatherStation extends GeoPoint {
+  // 气象站代码，例如 ZSPD
+  stationId: string;
+
+  // 给人看的名称，例如 Shanghai Pudong International Airport
+  name: string;
+
+  // 所属城市。每个城市必须独立校正，不能跨城市混用参数。
+  city: CityId;
+
+  // 这个站点是否是 Polymarket 结算站点。
+  // 上海温度市场重点使用 ZSPD，所以 ZSPD 应该是 true。
+  isSettlementStation: boolean;
+}
+
+export interface NearbyStationObservation extends GeoPoint {
+  // 周边气象站 ID
+  stationId: string;
+
+  // 当前或历史观测温度，单位摄氏度。
+  temp: number;
+
+  // 周边站点同一目标日期的最高温预报（℃）。
+  // 残差修正用：residual = temp - forecastTemp。
+  // 观测与预报必须对齐到同一天/同一量纲，否则残差无意义。
+  forecastTemp?: number;
+
+  // 周边站点到主站点的距离，单位公里。
+  distanceKm: number;
+
+  // 数据观测时间。空间修正必须知道数据是不是足够新。
+  observedAt: Date;
+
+  // 数据来源，例如 metar、open-meteo、manual-history。
+  sourceId: string;
+}
+
+export interface StandardizedForecast {
+  // 数据源 ID，例如 open-meteo-ecmwf、open-meteo-gfs、metar。
+  sourceId: string;
+
+  // 这次预报发布的时间。
+  issuanceTime: Date;
+
+  // 预报提前小时数，例如 D-3 大约是 72 小时附近。
+  forecastHour: number;
+
+  // 目标结算站点，例如 ZSPD。
+  targetStation: string;
+
+  // 数据源给出的主站点最高温预测，单位摄氏度。
+  forecastedMaxTemp: number;
+
+  // 集合预报成员。如果某个数据源没有集合成员，可以不提供。
+  // 注意：后续概率引擎不能简单平均这些成员，必须先经过城市独立偏差和空间修正。
+  ensembleMembers?: number[];
+
+  // 周边站点观测或预报数据，用于空间加权修正。
+  nearbyStationsData?: NearbyStationObservation[];
+
+  // 存放数据源原始信息，例如模型名、API 响应版本、质量标记等。
+  metadata: Record<string, unknown>;
+}
+
+export interface CityBiasProfile {
+  // 城市 ID。偏差库必须按城市隔离。
+  city: CityId;
+
+  // 数据源 ID。不同模型的系统性偏差不同，不能混在一起。
+  sourceId: string;
+
+  // 季节标签，例如 summer、winter。
+  season: string;
+
+  // 天气类型，例如 sunny、rainy、humid、typhoon-risk。
+  weatherRegime: string;
+
+  // 该城市、该数据源在类似天气下的平均偏差。
+  // 定义为：实际最高温 - 预报最高温。
+  meanBiasC: number;
+
+  // 偏差标准差，表示这个数据源在该城市的误差波动有多大。
+  stdBiasC: number;
+
+  // 历史偏差分位数，用于识别极端偏差风险。
+  quantilesC: {
+    p10: number;
+    p50: number;
+    p90: number;
+  };
+
+  // 样本数量。样本少时，策略应该降低对这个偏差 profile 的信任。
+  sampleSize: number;
+
+  // 最后更新时间。
+  updatedAt: Date;
+}
+
+export interface SpatialCorrectionInput {
+  city: CityId;
+  targetStation: WeatherStation;
+  rawForecast: StandardizedForecast;
+  cityBiasProfile: CityBiasProfile | null;
+}
+
+export interface SpatialCorrectionResult {
+  city: CityId;
+  targetStation: string;
+  sourceId: string;
+
+  // 原始主站点预报温度。
+  rawForecastedMaxTemp: number;
+
+  // 城市独立偏差修正后的温度。
+  biasCorrectedMaxTemp: number;
+
+  // 空间加权修正后的最终锚定温度。
+  spatialCorrectedMaxTemp: number;
+
+  // 空间修正带来的变化量。
+  spatialAdjustmentC: number;
+
+  // 0 到 1 的置信度。
+  // 周边站越多、越近、数据越新，置信度越高。
+  confidence: number;
+
+  // 参与修正的周边站点明细，便于之后复盘。
+  nearbyStationWeights: Array<{
+    stationId: string;
+    distanceKm: number;
+    weight: number;
+    temp: number;
+  }>;
+
+  updatedAt: Date;
+}
+
+export interface TemperatureBucket {
+  // 桶名称，例如 32、33、34，或 <=30、>=38。
+  label: string;
+
+  // 桶的下边界，单位摄氏度。没有下边界时为 null。
+  minTempC: number | null;
+
+  // 桶的上边界，单位摄氏度。没有上边界时为 null。
+  maxTempC: number | null;
+}
+
+export interface BucketProbability {
+  bucket: TemperatureBucket;
+
+  // 模型估计该桶命中的概率，范围 0 到 1。
+  probability: number;
+
+  // 市场 YES 价格，范围 0 到 1。没有行情时可为空。
+  yesPrice?: number;
+
+  // 市场 NO 价格，范围 0 到 1。没有行情时可为空。
+  noPrice?: number;
+
+  // 模型概率 - 市场价格。只是多因子之一，不再是唯一标准。
+  edge?: number;
+}
+
+export interface ProbabilityDistribution {
+  city: CityId;
+  targetStation: string;
+  horizon: ForecastHorizon;
+
+  // 概率计算必须基于空间修正后的温度锚，而不是原始成员简单平均。
+  correctedAnchorTempC: number;
+
+  // 离散度越高，说明模型不确定性越强，策略应该更保守。
+  dispersionC: number;
+
+  // 共识水平，范围 0 到 1。越高说明多个来源更一致。
+  consensusLevel: number;
+
+  buckets: BucketProbability[];
+
+  // 记录各数据源贡献，方便排查为什么某个桶概率高。
+  sourceContributions: Array<{
+    sourceId: string;
+    correctedTempC: number;
+    weight: number;
+    status: DataSourceStatus;
+  }>;
+
+  generatedAt: Date;
+}
+
+export interface MarketSnapshot {
+  marketId: string;
+  city: CityId;
+  targetDate: string;
+  bucket: TemperatureBucket;
+  yesPrice: number;
+  noPrice: number;
+  volumeUsd: number;
+  orderBookImbalance: number;
+  capturedAt: Date;
+}
+
+export interface TradingSignalScore {
+  // 总分，TradingDecisionEngine 会按这个排序候选桶。
+  totalScore: number;
+
+  cheapTailScore: number;
+  modelShockScore: number;
+  orderFlowScore: number;
+  spatialSupportScore: number;
+  relativeValueScore: number;
+  probabilityGapScore: number;
+  dispersionPenalty: number;
+}
+
+export interface TradingDecision {
+  city: CityId;
+  horizon: ForecastHorizon;
+  side: TradeSide;
+
+  // 主桶（区间中概率较高的那个），兼容单桶逻辑。
+  bucket: TemperatureBucket;
+
+  // 双桶区间策略：实际买入的相邻两个桶（>=2 表示双桶）。
+  // 退出条件：两桶当前 bid 之和 >= 0.85 即平仓。
+  buckets: TemperatureBucket[];
+
+  // 计划买入价格（双桶时为两桶价格之和）。
+  entryPrice: number;
+
+  // 计划投入金额，单位美元。
+  sizeUsd: number;
+
+  // paper 表示只记录模拟交易，live 才会真实下单。
+  mode: TradingMode;
+
+  score: TradingSignalScore;
+
+  // 用自然语言记录为什么买，便于小白复盘策略行为。
+  reason: string;
+
+  createdAt: Date;
+}
+
+export interface OpenPosition {
+  positionId: string;
+  city: CityId;
+  side: TradeSide;
+  bucket: TemperatureBucket;
+
+  // 双桶区间持仓：买入的相邻两个桶（>=2 表示双桶）。
+  buckets?: TemperatureBucket[];
+
+  entryPrice: number;
+  sizeUsd: number;
+  openedAt: Date;
+  mode: TradingMode;
+}
+
+export interface ExitPlan {
+  positionId: string;
+  city: CityId;
+
+  // 动态离场开始时间，通常是预测峰值前 1 到 1.5 小时。
+  softExitStartsAt: Date;
+
+  // 硬性清仓时间。上海策略默认本地时间 14:00 前。
+  hardExitAt: Date;
+
+  // 分批卖出次数。TWAP 会把大单拆成多笔，减少滑点。
+  twapSlices: number;
+
+  // 触发止盈的最低收益率，例如 0.25 表示盈利 25%。
+  takeProfitRatio: number;
+
+  // 是否已经完成全部离场。
+  completed: boolean;
+}
+
+export interface RedisWeatherPayload {
+  city: CityId;
+  horizon: ForecastHorizon;
+  probability: ProbabilityDistribution;
+  spatialCorrections: SpatialCorrectionResult[];
+
+  // 写入 Redis 的时间。策略端用它检查数据是否过期。
+  timestamp: string;
+}
+
+export interface DataSourceHealth {
+  sourceId: string;
+  status: DataSourceStatus;
+  consecutiveFailures: number;
+  lastSuccessAt?: Date;
+  lastError?: string;
+
+  // 当前数据源权重。失败过多后会自动降权。
+  currentWeight: number;
+}

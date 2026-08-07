@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    // 使用现代 Node.js 的模块解析方式，适配 package.json 里的 "type": "module"
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // 使用较新的 JavaScript 语法输出，Node.js 20 可以直接运行
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    // 源码目录和编译输出目录
+    "rootDir": "src",
+    "outDir": "dist",
+
+    // 严格模式：尽早发现类型错误，避免量化交易系统里出现隐性 bug
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+
+    // 常用工程选项
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+
+    // 生成 sourcemap，方便 VPS 上排查报错位置
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,72 @@
+{
+  "city": "shanghai",
+  "templateVersion": 1,
+  "description": "上海 ZSPD 浦东机场温度市场的周边站点配置。新增其他城市时复制本结构，替换 city、settlementStation 和 nearbyStations。",
+  "settlementStation": {
+    "stationId": "ZSPD",
+    "name": "Shanghai Pudong International Airport",
+    "lat": 31.1443,
+    "lon": 121.8083,
+    "role": "settlement"
+  },
+  "weightPolicy": {
+    "method": "auto",
+    "note": "不要手工固定最终权重。程序会根据距离、数据新鲜度、站点质量自动计算权重；这里的 manualWeight 只作为未来人工干预预留字段。"
+  },
+  "nearbyStations": [
+    {
+      "stationId": "ZSSS",
+      "name": "Shanghai Hongqiao International Airport",
+      "lat": 31.1979,
+      "lon": 121.3363,
+      "sourcePriority": ["metar", "open-meteo"],
+      "manualWeight": null,
+      "notes": "虹桥机场，代表上海西部城区机场环境，可帮助识别浦东与市区西侧的温差。"
+    },
+    {
+      "stationId": "Baoshan",
+      "name": "Shanghai Baoshan Reference Area",
+      "lat": 31.4053,
+      "lon": 121.4897,
+      "sourcePriority": ["open-meteo"],
+      "manualWeight": null,
+      "notes": "宝山方向，代表上海北部近郊环境。若没有 METAR，可先用 Open-Meteo 格点数据代替。"
+    },
+    {
+      "stationId": "Xujiahui",
+      "name": "Shanghai Xujiahui Urban Reference Area",
+      "lat": 31.1836,
+      "lon": 121.4330,
+      "sourcePriority": ["open-meteo"],
+      "manualWeight": null,
+      "notes": "徐家汇方向，代表中心城区热岛效应。对判断 ZSPD 是否低于市区温度有帮助。"
+    },
+    {
+      "stationId": "Nanhui",
+      "name": "Shanghai Nanhui Coastal Reference Area",
+      "lat": 30.9289,
+      "lon": 121.8797,
+      "sourcePriority": ["open-meteo"],
+      "manualWeight": null,
+      "notes": "南汇沿海方向，距离浦东机场较近，适合捕捉海风和沿海降温影响。"
+    },
+    {
+      "stationId": "Chongming",
+      "name": "Shanghai Chongming Reference Area",
+      "lat": 31.6260,
+      "lon": 121.3970,
+      "sourcePriority": ["open-meteo"],
+      "manualWeight": null,
+      "notes": "崇明方向，代表上海北侧江海交界区域。距离较远，通常权重会自动较低。"
+    },
+    {
+      "stationId": "Yangshan",
+      "name": "Yangshan Deep-Water Port Reference Area",
+      "lat": 30.6267,
+      "lon": 122.0644,
+      "sourcePriority": ["open-meteo"],
+      "manualWeight": null,
+      "notes": "洋山港方向，代表更强海洋影响。距离较远，主要用于识别海风边界风险。"
+    }
+  ]
+}
