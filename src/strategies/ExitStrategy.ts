@@ -50,6 +50,9 @@ export interface ExitCheckInput {
   timezone: string;
   position: OpenPosition;
   currentMarket: MarketSnapshot;
+  // 目标日期（YYYY-MM-DD）。阶段二只在目标日期当天（D0）触发，
+  // 否则持仓期间任何一天的"当前时间过峰值点"都会被误判为到点平仓。
+  targetDate: string;
   // 保留字段（兼容调用方）。当前两段式逻辑使用 city_peak_times.json 的确认时间。
   peakLocalTime: string;
   // 双桶区间持仓时，两个桶各自的当前 bid 价（用于判断合计 >= 0.85）。
@@ -87,8 +90,11 @@ export class ExitStrategy {
     }
 
     // 阶段二（峰值后）：到达该城市历史预测的峰值最晚时间，直接市价平仓。
-    // 不加确认缓冲：峰值一旦确认市场就走完了，按历史预测时间触发最稳。
-    if (isTimeToExit(timezone, exitConfig.hardExitLocalTime)) {
+    // 只在目标日期当天（D0）生效，避免 D2/D1 持仓被"当天时间过峰值"误平仓。
+    if (
+      this.isSettlementDay(timezone, input.targetDate) &&
+      isTimeToExit(timezone, exitConfig.hardExitLocalTime)
+    ) {
       return {
         trigger: 'peak_confirmed',
         sellFraction: 1,
@@ -135,6 +141,21 @@ export class ExitStrategy {
   }
 
   // ==================== 内部实现 ====================
+
+  /**
+   * 当前城市日期（YYYY-MM-DD）是否为目标日期（D0）。
+   * targetDate 为空（旧记录）时兼容为 true，仅按时间判断。
+   */
+  private isSettlementDay(timezone: string, targetDate: string): boolean {
+    if (!targetDate) return true;
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return formatter.format(new Date()) === targetDate;
+  }
 
   private loadExitConfig(city: CityId): {
     softExitBeforePeakHours: number;

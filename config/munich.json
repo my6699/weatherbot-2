@@ -1,0 +1,243 @@
+{
+  "city": "munich",
+  "timezone": "Europe/Berlin",
+  "settlementStation": {
+    "stationId": "EDDM",
+    "name": "Munich International",
+    "lat": 48.3537,
+    "lon": 11.775
+  },
+  "nearbyStationsFile": "config/stations/eddm_nearby.json",
+  "peakTimeLocal": {
+    "earliest": "12:00",
+    "typical": "14:00",
+    "latest": "16:00"
+  },
+  "buckets": [
+    {
+      "label": "<=-5",
+      "minTempC": null,
+      "maxTempC": -5
+    },
+    {
+      "label": "-4",
+      "minTempC": -5,
+      "maxTempC": -4
+    },
+    {
+      "label": "-3",
+      "minTempC": -4,
+      "maxTempC": -3
+    },
+    {
+      "label": "-2",
+      "minTempC": -3,
+      "maxTempC": -2
+    },
+    {
+      "label": "-1",
+      "minTempC": -2,
+      "maxTempC": -1
+    },
+    {
+      "label": "0",
+      "minTempC": -1,
+      "maxTempC": 0
+    },
+    {
+      "label": "1",
+      "minTempC": 0,
+      "maxTempC": 1
+    },
+    {
+      "label": "2",
+      "minTempC": 1,
+      "maxTempC": 2
+    },
+    {
+      "label": "3",
+      "minTempC": 2,
+      "maxTempC": 3
+    },
+    {
+      "label": "4",
+      "minTempC": 3,
+      "maxTempC": 4
+    },
+    {
+      "label": "5",
+      "minTempC": 4,
+      "maxTempC": 5
+    },
+    {
+      "label": "6",
+      "minTempC": 5,
+      "maxTempC": 6
+    },
+    {
+      "label": "7",
+      "minTempC": 6,
+      "maxTempC": 7
+    },
+    {
+      "label": "8",
+      "minTempC": 7,
+      "maxTempC": 8
+    },
+    {
+      "label": "9",
+      "minTempC": 8,
+      "maxTempC": 9
+    },
+    {
+      "label": "10",
+      "minTempC": 9,
+      "maxTempC": 10
+    },
+    {
+      "label": "11",
+      "minTempC": 10,
+      "maxTempC": 11
+    },
+    {
+      "label": "12",
+      "minTempC": 11,
+      "maxTempC": 12
+    },
+    {
+      "label": "13",
+      "minTempC": 12,
+      "maxTempC": 13
+    },
+    {
+      "label": "14",
+      "minTempC": 13,
+      "maxTempC": 14
+    },
+    {
+      "label": "15",
+      "minTempC": 14,
+      "maxTempC": 15
+    },
+    {
+      "label": "16",
+      "minTempC": 15,
+      "maxTempC": 16
+    },
+    {
+      "label": "17",
+      "minTempC": 16,
+      "maxTempC": 17
+    },
+    {
+      "label": "18",
+      "minTempC": 17,
+      "maxTempC": 18
+    },
+    {
+      "label": "19",
+      "minTempC": 18,
+      "maxTempC": 19
+    },
+    {
+      "label": "20",
+      "minTempC": 19,
+      "maxTempC": 20
+    },
+    {
+      "label": "21",
+      "minTempC": 20,
+      "maxTempC": 21
+    },
+    {
+      "label": "22",
+      "minTempC": 21,
+      "maxTempC": 22
+    },
+    {
+      "label": "23",
+      "minTempC": 22,
+      "maxTempC": 23
+    },
+    {
+      "label": "24",
+      "minTempC": 23,
+      "maxTempC": 24
+    },
+    {
+      "label": "25",
+      "minTempC": 24,
+      "maxTempC": 25
+    },
+    {
+      "label": "26",
+      "minTempC": 25,
+      "maxTempC": 26
+    },
+    {
+      "label": "27",
+      "minTempC": 26,
+      "maxTempC": 27
+    },
+    {
+      "label": "28",
+      "minTempC": 27,
+      "maxTempC": 28
+    },
+    {
+      "label": "29",
+      "minTempC": 28,
+      "maxTempC": 29
+    },
+    {
+      "label": "30",
+      "minTempC": 29,
+      "maxTempC": 30
+    },
+    {
+      "label": "31",
+      "minTempC": 30,
+      "maxTempC": 31
+    },
+    {
+      "label": "32",
+      "minTempC": 31,
+      "maxTempC": 32
+    },
+    {
+      "label": "33",
+      "minTempC": 32,
+      "maxTempC": 33
+    },
+    {
+      "label": "34",
+      "minTempC": 33,
+      "maxTempC": 34
+    },
+    {
+      "label": ">=35",
+      "minTempC": 34,
+      "maxTempC": null
+    }
+  ],
+  "spatialCorrection": {
+    "method": "idw",
+    "maxRadiusKm": 50,
+    "minNearbyStations": 3,
+    "idwPower": 2,
+    "gaussianBandwidthKm": 18
+  },
+  "scoringWeights": {
+    "cheapTail": 1.6,
+    "modelShock": 1.2,
+    "orderFlow": 1,
+    "spatialSupport": 1.5,
+    "relativeValue": 1.1,
+    "probabilityGap": 1.3,
+    "dispersionPenalty": 1.4
+  },
+  "risk": {
+    "maxPositionUsd": 25,
+    "maxCityExposureUsd": 100
+  }
+}

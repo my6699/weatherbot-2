@@ -4,6 +4,7 @@ import process from 'node:process';
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import type { CityId, TradingMode } from './types.js';
+import { ALL_CITIES } from './types.js';
 
 // 这个文件负责读取配置。
 // 量化系统里不要把参数写死在代码中，因为城市、风控、交易模式、数据源权重都需要经常调整。
@@ -14,7 +15,12 @@ import type { CityId, TradingMode } from './types.js';
 dotenv.config();
 
 const tradingModeSchema = z.enum(['paper', 'live']);
-const cityIdSchema = z.enum(['shanghai']);
+const cityIdSchema = z.enum([
+  'shanghai', 'nyc', 'chicago', 'miami', 'dallas',
+  'seattle', 'atlanta', 'london', 'paris', 'munich',
+  'ankara', 'seoul', 'tokyo', 'singapore', 'lucknow',
+  'tel-aviv', 'toronto', 'sao-paulo', 'buenos-aires', 'wellington',
+]);
 
 const envSchema = z.object({
   NODE_ENV: z.string().default('development'),
@@ -33,6 +39,17 @@ const envSchema = z.object({
   POLYMARKET_PRIVATE_KEY: z.string().default(''),
   POLYMARKET_FUNDER_ADDRESS: z.string().default(''),
   POLYMARKET_SIGNATURE_TYPE: z.coerce.number().int().default(0),
+  // 真实交易（CLOB 下单）参数：TRADING_MODE=live 时生效。
+  // POLYMARKET_CHAIN_ID：137=Polygon 主网（默认），80002=Amoy 测试网。
+  // POLYMARKET_MAKER_MODE：true=maker-first（post-only 限价单优先，失败市价回退，默认）。
+  // POLYMARKET_ENTRY_ORDER_TYPE / POLYMARKET_EXIT_ORDER_TYPE：市价回退单类型 FAK/FOK。
+  POLYMARKET_CHAIN_ID: z.coerce.number().int().default(137),
+  POLYMARKET_MAKER_MODE: z
+    .string()
+    .default('true')
+    .transform((value) => value.toLowerCase() === 'true'),
+  POLYMARKET_ENTRY_ORDER_TYPE: z.enum(['FAK', 'FOK']).default('FAK'),
+  POLYMARKET_EXIT_ORDER_TYPE: z.enum(['FAK', 'FOK']).default('FAK'),
 
   MAX_POSITION_USD: z.coerce.number().positive().default(20),
   MAX_CITY_EXPOSURE_USD: z.coerce.number().positive().default(80),
@@ -156,6 +173,24 @@ export function loadAppConfig(city?: CityId): AppConfig {
     city: loadCityConfig(selectedCity, projectRoot),
     projectRoot,
   };
+}
+
+/**
+ * 加载所有已配置城市的 CityConfig 列表。
+ * 用于 DataHubService 在单次 runOnce 中循环采集所有城市。
+ */
+export function loadAllCityConfigs(projectRoot = getProjectRoot()): CityConfig[] {
+  const env = loadEnv();
+  const configs: CityConfig[] = [];
+  for (const city of ALL_CITIES) {
+    try {
+      configs.push(loadCityConfig(city, projectRoot));
+    } catch {
+      // 城市配置不存在时跳过（如还未生成 config/<city>.json 的城市）
+      continue;
+    }
+  }
+  return configs;
 }
 
 export function resolveConfigPath(projectRoot: string, relativePath: string): string {

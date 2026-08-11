@@ -1,22 +1,47 @@
 {
-  "city": "shanghai",
-  "timezone": "Asia/Shanghai",
+  "city": "singapore",
+  "timezone": "Asia/Singapore",
   "settlementStation": {
-    "stationId": "ZSPD",
-    "name": "Shanghai Pudong International Airport",
-    "lat": 31.1443,
-    "lon": 121.8083
+    "stationId": "WSSS",
+    "name": "Singapore Changi",
+    "lat": 1.3502,
+    "lon": 103.994
   },
-  "nearbyStationsFile": "config/stations/zspd_nearby.json",
+  "nearbyStationsFile": "config/stations/wsss_nearby.json",
   "peakTimeLocal": {
-    "earliest": "11:00",
-    "typical": "12:30",
-    "latest": "14:00"
+    "earliest": "12:00",
+    "typical": "14:00",
+    "latest": "16:00"
   },
   "buckets": [
     {
-      "label": "<=30",
+      "label": "<=25",
       "minTempC": null,
+      "maxTempC": 25
+    },
+    {
+      "label": "26",
+      "minTempC": 25,
+      "maxTempC": 26
+    },
+    {
+      "label": "27",
+      "minTempC": 26,
+      "maxTempC": 27
+    },
+    {
+      "label": "28",
+      "minTempC": 27,
+      "maxTempC": 28
+    },
+    {
+      "label": "29",
+      "minTempC": 28,
+      "maxTempC": 29
+    },
+    {
+      "label": "30",
+      "minTempC": 29,
       "maxTempC": 30
     },
     {
@@ -50,8 +75,13 @@
       "maxTempC": 36
     },
     {
-      "label": ">=37",
+      "label": "37",
       "minTempC": 36,
+      "maxTempC": 37
+    },
+    {
+      "label": ">=38",
+      "minTempC": 37,
       "maxTempC": null
     }
   ],

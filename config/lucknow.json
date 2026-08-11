@@ -1,0 +1,153 @@
+{
+  "city": "lucknow",
+  "timezone": "Asia/Kolkata",
+  "settlementStation": {
+    "stationId": "VILK",
+    "name": "Lucknow Amausi",
+    "lat": 26.7606,
+    "lon": 80.8893
+  },
+  "nearbyStationsFile": "config/stations/vilk_nearby.json",
+  "peakTimeLocal": {
+    "earliest": "11:00",
+    "typical": "13:00",
+    "latest": "15:00"
+  },
+  "buckets": [
+    {
+      "label": "<=20",
+      "minTempC": null,
+      "maxTempC": 20
+    },
+    {
+      "label": "21",
+      "minTempC": 20,
+      "maxTempC": 21
+    },
+    {
+      "label": "22",
+      "minTempC": 21,
+      "maxTempC": 22
+    },
+    {
+      "label": "23",
+      "minTempC": 22,
+      "maxTempC": 23
+    },
+    {
+      "label": "24",
+      "minTempC": 23,
+      "maxTempC": 24
+    },
+    {
+      "label": "25",
+      "minTempC": 24,
+      "maxTempC": 25
+    },
+    {
+      "label": "26",
+      "minTempC": 25,
+      "maxTempC": 26
+    },
+    {
+      "label": "27",
+      "minTempC": 26,
+      "maxTempC": 27
+    },
+    {
+      "label": "28",
+      "minTempC": 27,
+      "maxTempC": 28
+    },
+    {
+      "label": "29",
+      "minTempC": 28,
+      "maxTempC": 29
+    },
+    {
+      "label": "30",
+      "minTempC": 29,
+      "maxTempC": 30
+    },
+    {
+      "label": "31",
+      "minTempC": 30,
+      "maxTempC": 31
+    },
+    {
+      "label": "32",
+      "minTempC": 31,
+      "maxTempC": 32
+    },
+    {
+      "label": "33",
+      "minTempC": 32,
+      "maxTempC": 33
+    },
+    {
+      "label": "34",
+      "minTempC": 33,
+      "maxTempC": 34
+    },
+    {
+      "label": "35",
+      "minTempC": 34,
+      "maxTempC": 35
+    },
+    {
+      "label": "36",
+      "minTempC": 35,
+      "maxTempC": 36
+    },
+    {
+      "label": "37",
+      "minTempC": 36,
+      "maxTempC": 37
+    },
+    {
+      "label": "38",
+      "minTempC": 37,
+      "maxTempC": 38
+    },
+    {
+      "label": "39",
+      "minTempC": 38,
+      "maxTempC": 39
+    },
+    {
+      "label": "40",
+      "minTempC": 39,
+      "maxTempC": 40
+    },
+    {
+      "label": "41",
+      "minTempC": 40,
+      "maxTempC": 41
+    },
+    {
+      "label": ">=42",
+      "minTempC": 41,
+      "maxTempC": null
+    }
+  ],
+  "spatialCorrection": {
+    "method": "idw",
+    "maxRadiusKm": 50,
+    "minNearbyStations": 3,
+    "idwPower": 2,
+    "gaussianBandwidthKm": 18
+  },
+  "scoringWeights": {
+    "cheapTail": 1.6,
+    "modelShock": 1.2,
+    "orderFlow": 1,
+    "spatialSupport": 1.5,
+    "relativeValue": 1.1,
+    "probabilityGap": 1.3,
+    "dispersionPenalty": 1.4
+  },
+  "risk": {
+    "maxPositionUsd": 25,
+    "maxCityExposureUsd": 100
+  }
+}

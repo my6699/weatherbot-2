@@ -295,10 +295,11 @@ export class DataIngestionLayer {
     };
 
     // 只有 ECMWF 需要指定 model 参数，其他模型是 Open-Meteo 默认的。
+    // Open-Meteo 在 2026 年更新了模型名：ecmwf → ecmwf_ifs, icon → icon_global
     if (model === 'ecmwf') {
-      params.models = 'ecmwf';
+      params.models = 'ecmwf_ifs';
     } else if (model === 'icon') {
-      params.models = 'icon';
+      params.models = 'icon_global';
     } else if (model === 'gfs_global') {
       params.models = 'gfs_global';
     }

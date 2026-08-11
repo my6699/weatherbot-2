@@ -25,12 +25,14 @@ import { ExitStrategy } from './ExitStrategy.js';
 import type { ExitCheckInput } from './ExitStrategy.js';
 import { PolymarketClient } from '../utils/polymarket-client.js';
 import { delayMs, calculateHorizon, formatISODate, getCityDate, hoursToResolution } from '../utils/time.js';
+import { recordOpenTrade, recordCloseTrade } from '../utils/trade-recorder.js';
 import type {
   ProbabilityDistribution,
   MarketSnapshot,
   OpenPosition,
   TradingDecision,
   ForecastHorizon,
+  CityId,
 } from '../common/types.js';
 
 const logger = createModuleLogger('StrategyInstance');
@@ -285,6 +287,7 @@ export class StrategyInstance {
           timezone: this.config.city.timezone,
           position,
           currentMarket: snapshot,
+          targetDate: position.targetDate ?? '',
           peakLocalTime: this.config.city.peakTimeLocal.typical,
         };
         if (bucketBids) {
@@ -306,6 +309,15 @@ export class StrategyInstance {
             // 全部平仓，从持仓列表移除。
             this.positions = this.positions.filter((p) => p.positionId !== position.positionId);
             logger.info('仓位已全部平仓（paper）', { positionId: position.positionId });
+
+            // 持久化平仓记录，供每日报告统计。
+            // paper 阶段用入场价作为离场价（退出策略触发时默认满盈离场）。
+            const exitPrice = position.entryPrice;
+            const exitPriceA = position.entryPrice / (position.buckets?.length ?? 1);
+            const exitPriceB = position.buckets && position.buckets.length >= 2
+              ? position.entryPrice / position.buckets.length
+              : 0;
+            recordCloseTrade(position.city, position.positionId, exitPrice, exitPriceA, exitPriceB);
           }
         } else {
           logger.info('继续持有', {
@@ -382,8 +394,31 @@ export class StrategyInstance {
       sizeUsd: decision.sizeUsd,
       openedAt: new Date(),
       mode: 'paper',
+      targetDate: '',
     };
     this.positions.push(position);
+
+    // 持久化交易记录，供每日报告统计。
+    // 双桶区间：entryPriceA = 价格较低的桶，entryPriceB = 价格较高的桶。
+    const prices = decision.buckets.map((b, i) => {
+      // 估算每个桶的入场价（按 buckets 长度均分 entryPrice，paper 阶段简化）。
+      const avgPrice = decision.entryPrice / decision.buckets.length;
+      return { label: b.label, price: avgPrice };
+    });
+    const entryPriceA = prices[0]?.price ?? 0;
+    const entryPriceB = prices[1]?.price ?? 0;
+    recordOpenTrade(
+      decision.city,
+      decision.horizon,
+      decision.buckets,
+      decision.entryPrice,
+      decision.sizeUsd,
+      decision.side,
+      entryPriceA,
+      entryPriceB,
+      decision.reason,
+      position.positionId,
+    );
   }
 
   /**
@@ -419,7 +454,7 @@ export class StrategyInstance {
  */
 async function main(): Promise<void> {
   const cityArg = process.argv.find((arg) => arg.startsWith('--city='));
-  const city = (cityArg?.split('=')[1] as 'shanghai' | undefined) ?? 'shanghai';
+  const city = (cityArg?.split('=')[1] as CityId | undefined) ?? 'shanghai';
 
   const { loadAppConfig } = await import('../common/config-loader.js');
   const config = loadAppConfig(city);
@@ -440,9 +475,7 @@ async function main(): Promise<void> {
 }
 
 // 直接运行时启动（tsx 直接执行本文件）。
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
-  main().catch((error) => {
-    logError(logger, 'StrategyInstance 启动失败', error);
-    process.exit(1);
-  });
-}
+main().catch((error) => {
+  logError(logger, 'StrategyInstance 启动失败', error);
+  process.exit(1);
+});

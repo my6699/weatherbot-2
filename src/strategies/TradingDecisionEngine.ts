@@ -29,12 +29,9 @@ import { createModuleLogger } from '../common/logger.js';
 
 const logger = createModuleLogger('TradingDecisionEngine');
 
-// 双桶入场 edge 直过滤：模型区间置信 pPair 必须显著高于买入成本。
-//   pPair - 买入成本 >= MIN_PAIR_EDGE 才允许开仓。
-// 依据（2026-08-07 诊断）：双桶路径只按 pPair 排序选桶，没有 edge 检查，
-// tel-aviv 08-05 用 0.905 买入自己只信 67% 的桶对（市场 87-93% 反而更准）。
-// 价格绝对值上限（0.5/0.85）已验证是负优化——edge 直过滤只拦"模型自己都不信的贵单"。
-const MIN_PAIR_EDGE = 0.10;
+// 双桶入场成本上限：两个桶的 YES 价格之和 ≤ 0.65。
+// 成本超过 0.65 说明市场已经高度确信，没有足够上行空间。
+const MAX_ENTRY_COST = 0.65;
 
 export interface CandidateBucket {
   bucket: TemperatureBucket;
@@ -76,12 +73,15 @@ export class TradingDecisionEngine {
    * 选桶逻辑（2026-08-07 双桶区间改造）：
    *   不再选单一桶 —— 单桶选中后只要温度落在相邻桶就全输，
    *   且"最高概率桶"系统性高估（argmax 选择偏差）。
+   * 双桶入场决策（D3/D2 市场开盘第一时间使用）。
    *
-   *   新逻辑：找"最接近实际温度"的相邻桶对（区间）：
+   * 新逻辑：找"模型和市场最一致"的相邻桶对（区间）：
    *     1. 从候选桶里找出所有相邻桶对（温度边界相连的两个桶）。
    *     2. 过滤：两个桶都必须有交易量（成交量 > 0 才买）。
-   *     3. 区间概率 pPair = p(桶A) + p(桶B)，选 pPair 最高的对。
-   *     4. 生成双桶决策：entryPrice = 两桶 YES 价格之和。
+   *     3. 区间概率 pPair = p(桶A) + p(桶B)，买入成本 = YES(桶A) + YES(桶B)。
+   *     4. 按 |pPair - 买入成本| 升序排序，选最"一致"的对。
+   *     5. 过滤：买入成本 ≤ 0.65（市场不能太确信）。
+   *     6. 生成双桶决策：entryPrice = 两桶 YES 价格之和。
    *   退出逻辑在 ExitStrategy：两桶 bid 之和 >= 0.85 即平仓。
    */
   decide(context: DecisionContext): TradingDecision | null {
@@ -138,31 +138,41 @@ export class TradingDecisionEngine {
       return this.decideSingle(context, viable);
     }
 
-    // 4. 按区间概率排序，选最高的相邻对。
-    pairs.sort((x, y) => y.pPair - x.pPair);
-    const best = pairs[0]!;
+    // 4. 按 |pPair - 买入成本| 升序排序，选模型和市场最"一致"的相邻对。
+    //    一致 = 模型预测概率与市场定价差值最小（模型和市场都不离谱）。
+    const priced = pairs.map((p) => ({
+      ...p,
+      entryCost: p.a.yesPrice + p.b.yesPrice,
+      agreement: Math.abs(p.pPair - (p.a.yesPrice + p.b.yesPrice)),
+    }));
+    priced.sort((x, y) => x.agreement - y.agreement);
 
-    // 4.5. 双桶入场 edge 直过滤：模型区间置信 pPair 必须显著高于买入成本。
-    //     pPair - 买入成本 >= MIN_PAIR_EDGE 才允许开仓（与回测 simulate-all-cities 对齐）。
-    //     edge 不足说明模型自己都不信这个区间，买了就是给市场送钱，跳过本轮。
-    const entryCost = best.a.yesPrice + best.b.yesPrice;
-    if (best.pPair - entryCost < MIN_PAIR_EDGE) {
-      logger.warn('双桶区间 edge 不足，跳过决策', {
+    // 4.5. 成本过滤：两个桶 YES 价格之和必须 ≤ MAX_ENTRY_COST。
+    //     成本过高说明市场已高度确信，没有足够上行空间，跳过。
+    const affordable = priced.filter((p) => p.entryCost <= MAX_ENTRY_COST);
+
+    if (affordable.length === 0) {
+      logger.warn('所有候选桶对成本均超过上限，跳过决策', {
         city: context.city,
-        buckets: `${best.a.bucket.label}+${best.b.bucket.label}`,
-        pPair: best.pPair.toFixed(3),
-        entryCost: entryCost.toFixed(3),
-        edge: (best.pPair - entryCost).toFixed(3),
+        bestPair: priced[0]
+          ? `${priced[0]!.a.bucket.label}+${priced[0]!.b.bucket.label}`
+          : null,
+        bestEntryCost: priced[0] ? priced[0]!.entryCost.toFixed(3) : null,
+        maxEntryCost: MAX_ENTRY_COST,
       });
       return null;
     }
+
+    const best = affordable[0]!;
+    const entryCost = best.entryCost;
 
     const score = this.computeScore(best.a, distribution, this.cityConfig.scoringWeights);
 
     logger.info('双桶区间选桶完成', {
       buckets: `${best.a.bucket.label}+${best.b.bucket.label}`,
       pPair: best.pPair.toFixed(3),
-      entryCost: (best.a.yesPrice + best.b.yesPrice).toFixed(3),
+      entryCost: entryCost.toFixed(3),
+      agreement: best.agreement.toFixed(3),
       aPrice: best.a.yesPrice,
       bPrice: best.b.yesPrice,
       reason: this.buildIntervalReason(best.a, best.b, best.pPair),

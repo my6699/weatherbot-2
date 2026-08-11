@@ -1,7 +1,18 @@
 // 这个文件只放“类型定义”，不放具体业务逻辑。
 // 好处是：每个模块都使用同一套数据结构，减少字段名写错、单位混乱、模块之间对不上接口的问题。
 
-export type CityId = 'shanghai';
+export type CityId =
+  | 'shanghai' | 'nyc' | 'chicago' | 'miami' | 'dallas'
+  | 'seattle' | 'atlanta' | 'london' | 'paris' | 'munich'
+  | 'ankara' | 'seoul' | 'tokyo' | 'singapore' | 'lucknow'
+  | 'tel-aviv' | 'toronto' | 'sao-paulo' | 'buenos-aires' | 'wellington';
+
+export const ALL_CITIES: CityId[] = [
+  'shanghai', 'nyc', 'chicago', 'miami', 'dallas',
+  'seattle', 'atlanta', 'london', 'paris', 'munich',
+  'ankara', 'seoul', 'tokyo', 'singapore', 'lucknow',
+  'tel-aviv', 'toronto', 'sao-paulo', 'buenos-aires', 'wellington',
+];
 
 export type TradingMode = 'paper' | 'live';
 
@@ -271,6 +282,8 @@ export interface OpenPosition {
   city: CityId;
   side: TradeSide;
   bucket: TemperatureBucket;
+  // 市场目标日期（YYYY-MM-DD，结算闭环用）。
+  targetDate: string;
 
   // 双桶区间持仓：买入的相邻两个桶（>=2 表示双桶）。
   buckets?: TemperatureBucket[];
@@ -279,6 +292,60 @@ export interface OpenPosition {
   sizeUsd: number;
   openedAt: Date;
   mode: TradingMode;
+  // D1 换仓标记：已换仓的持仓不再重复换仓（每笔只换一次，与回测 SWITCH_D1 口径一致）。
+  switched?: boolean;
+}
+
+export type TradeStatus = 'open' | 'closed' | 'settled';
+
+/**
+ * 持久化的交易记录，供每日结算报告统计。
+ */
+export interface TradeRecord {
+  id: string;
+  city: CityId;
+  horizon: ForecastHorizon;
+  // 实际买入的桶（双桶区间为两个桶的 label）。
+  buckets: string[];
+  // 市场目标日期（YYYY-MM-DD，结算闭环用）。
+  targetDate: string;
+  // 主桶 label（区间中概率较高的那个）。
+  bucketLabel: string;
+  entryPrice: number;
+  // 双桶各自的入场价（单桶时 entryPriceA 等于 entryPrice，entryPriceB 为 0）。
+  entryPriceA: number;
+  entryPriceB: number;
+  sizeUsd: number;
+  side: TradeSide;
+  openedAt: string;
+  closedAt: string | null;
+  exitPrice: number | null;
+  exitPriceA: number | null;
+  exitPriceB: number | null;
+  pnl: number | null;
+  // true = 命中，false = 未命中，null = 未结算。
+  hit: boolean | null;
+  settledAt: string | null;
+  settlementPrice: number | null;
+  status: TradeStatus;
+  reason: string;
+  // paper = 模拟持仓；live = 真实持仓（重启恢复时按此模式走真实下单平仓/换仓）。
+  mode?: TradingMode;
+  // ===== D1 换仓（SWITCH_D1，2026-08-09 正式接入生产引擎） =====
+  // 触发：持仓目标日期的最新预测中，旧桶对模型区间概率 ≤ SWITCH_THRESHOLD，
+  //   且决策引擎选出不同新桶对 → paper/live 卖旧买新。
+  // 换仓后该笔持仓以新桶继续监控/结算；结算盈亏按"旧桶段已实现 + 新桶段待结算"计算。
+  switched?: boolean;
+  switchKeys?: string[]; // 换仓后的新桶 label
+  switchSell?: number;   // 旧桶卖出回收（两桶 YES 价和，0~1 价格比例）
+  switchBuy?: number;    // 新桶买入成本（两桶 YES 价和，0~1 价格比例）
+  switchAt?: string;     // 换仓时间 ISO
+  // ===== 市场原生桶精确 °C 边界（2026-08-11 起，进程重启恢复持仓用） =====
+  // 桶对象不再依赖 config 摄氏网格（°F 城市原生桶与 config 网格解耦），
+  // 开仓/换仓时把桶边界持久化，restorePositions 直接用边界还原桶对象。
+  // bucketBounds[i] 对应 buckets[i]；switchBucketBounds[i] 对应 switchKeys[i]。
+  bucketBounds?: Array<{ minTempC: number | null; maxTempC: number | null }>;
+  switchBucketBounds?: Array<{ minTempC: number | null; maxTempC: number | null }>;
 }
 
 export interface ExitPlan {

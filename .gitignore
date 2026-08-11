@@ -18,3 +18,18 @@ Thumbs.db
 
 # 运行时数据（大体积，不入库）
 *.tmp
+
+# tsc 编译产物（源码是 TypeScript，.js/.js.map 不入库）
+*.js.map
+src/**/*.js
+
+# 打包与临时文件
+*.zip
+*.tar
+tmp-grid/
+
+# 运行时数据（账本/回测/快照不入库；price-history 已跟踪，保留）
+data/trades-*.json
+data/backtest/
+data/server-redis-export.json
+data/markets/

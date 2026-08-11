@@ -9,7 +9,6 @@
 // 这套客户端保持只读，降低纸面交易阶段的复杂度。
 
 import { execSync } from 'child_process';
-import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from 'undici';
 import type { MarketSnapshot, TemperatureBucket } from '../common/types.js';
 
 const GAMMA_API_BASE =
@@ -52,14 +51,19 @@ function detectProxy(): string | null {
   return null;
 }
 
+// 使用 Node.js 20+ 内置 fetch，避免依赖 undici（其版本与 Node 18/20 有兼容问题）。
+import type { Dispatcher } from 'undici';
+
 let proxyAgent: Dispatcher | null = null;
 
-function getProxyAgent(): Dispatcher | null {
+async function getProxyAgent(): Promise<Dispatcher | null> {
   const proxy = detectProxy();
   if (!proxy) return null;
+  // 只有探测到代理才动态加载 undici（本地开发 Windows 代理场景），服务器直连不需要。
   if (proxyAgent) return proxyAgent;
   try {
-    proxyAgent = new ProxyAgent(proxy);
+    const { ProxyAgent } = await import('undici');
+    proxyAgent = new ProxyAgent(proxy) as Dispatcher;
     return proxyAgent;
   } catch {
     return null;
@@ -74,9 +78,18 @@ async function requestJson<T>(url: string, timeoutMs: number): Promise<T> {
       signal: ac.signal,
       headers: { Accept: 'application/json' },
     };
-    const agent = getProxyAgent();
-    if (agent) opts.dispatcher = agent;
-    const res = await undiciFetch(url, opts);
+    const agent = await getProxyAgent();
+    if (agent) {
+      // 有代理时用 undici 自身的 fetch + ProxyAgent（同一份 undici）。
+      // 不能把外部 undici 的 ProxyAgent 传给 Node 内置 fetch：Node 25 内置 undici
+      // 与 node_modules 的 undici 是两份实现，dispatcher 校验不兼容
+      // （InvalidArgumentError: invalid onRequestStart method），代理请求必失败。
+      const { fetch: undiciFetch } = await import('undici');
+      const res = await undiciFetch(url, { ...opts, dispatcher: agent });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as T;
+    }
+    const res = await fetch(url, opts);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as T;
   } finally {

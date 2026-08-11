@@ -13,8 +13,10 @@
 //   甚至会把热岛/海洋站的网格偏差混进主站。
 //   所以当前只做"原始预报 + 城市独立偏差修正"，不再做空间加权。
 //
-// 一个 DataHub 可以服务多个城市（每个城市独立配置）。
-// 当前实现聚焦上海，但结构上已支持多城市。
+// 多城市（2026-08-08）：一个 DataHub 同时服务所有已配置城市。
+//   - 构造时接收全部城市 CityConfig[]。
+//   - 每个城市有独立的 BiasCharacterizationLibrary 和 AdaptiveProbabilityEngine。
+//   - runOnce() 循环采集所有城市，写入各自 Redis key（按 city 隔离）。
 
 import type { Redis } from 'ioredis';
 import { DataIngestionLayer } from './DataIngestionLayer.js';
@@ -22,7 +24,7 @@ import { BiasCharacterizationLibrary } from './BiasCharacterizationLibrary.js';
 import { AdaptiveProbabilityEngine } from './AdaptiveProbabilityEngine.js';
 import { DebCalibration } from './DebCalibration.js';
 import { createModuleLogger, logError } from '../common/logger.js';
-import type { AppConfig, CityConfig } from '../common/config-loader.js';
+import type { AppEnv, CityConfig } from '../common/config-loader.js';
 import type {
   StandardizedForecast,
   SpatialCorrectionResult,
@@ -34,38 +36,47 @@ import { delayMs } from '../utils/time.js';
 
 const logger = createModuleLogger('DataHubService');
 
+/** 每个城市独立保存的引擎实例。 */
+interface CityRuntime {
+  city: CityConfig;
+  biasLibrary: BiasCharacterizationLibrary;
+  probabilityEngine: AdaptiveProbabilityEngine;
+}
+
 export class DataHubService {
   private readonly ingestion: DataIngestionLayer;
-  private readonly biasLibrary: BiasCharacterizationLibrary;
   private readonly debCalibration: DebCalibration;
-  private readonly probabilityEngine: AdaptiveProbabilityEngine;
   private readonly redis: Redis;
-  private readonly config: AppConfig;
+  private readonly env: AppEnv;
+  private readonly cities: CityRuntime[];
   private running = false;
 
-  constructor(config: AppConfig) {
-    this.config = config;
+  constructor(env: AppEnv, cityConfigs: CityConfig[]) {
+    this.env = env;
     this.ingestion = new DataIngestionLayer();
-    this.biasLibrary = new BiasCharacterizationLibrary(
-      config.city.city,
-      config.projectRoot,
-    );
-    this.debCalibration = new DebCalibration(config.projectRoot);
-    this.probabilityEngine = new AdaptiveProbabilityEngine(
-      config.city.city,
-      config.city.settlementStation.stationId,
-      config.city.buckets,
-    );
+    this.debCalibration = new DebCalibration(process.cwd());
     this.redis = createRedisClient();
+    this.cities = cityConfigs.map((city) => ({
+      city,
+      biasLibrary: new BiasCharacterizationLibrary(city.city, process.cwd()),
+      probabilityEngine: new AdaptiveProbabilityEngine(
+        city.city,
+        city.settlementStation.stationId,
+        city.buckets,
+      ),
+    }));
+    if (this.cities.length === 0) {
+      throw new Error('未配置任何城市，DataHub 无法启动');
+    }
   }
 
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
-    const pollInterval = this.config.env.DATAHUB_POLL_INTERVAL_SECONDS;
+    const pollInterval = this.env.DATAHUB_POLL_INTERVAL_SECONDS;
     logger.info(`DataHubService 启动`, {
-      city: this.config.city.city,
+      cities: this.cities.map((c) => c.city.city),
       pollIntervalSeconds: pollInterval,
     });
 
@@ -101,110 +112,120 @@ export class DataHubService {
   }
 
   /**
-   * 执行一次完整的数据生产流程。
+   * 执行一次完整的数据生产流程：循环采集所有城市。
    */
   async runOnce(): Promise<void> {
-    const city = this.config.city;
+    for (const runtime of this.cities) {
+      try {
+        await this.runForCity(runtime);
+      } catch (error) {
+        logError(logger, `采集城市 ${runtime.city.city} 失败`, error);
+      }
+    }
+  }
+
+  /**
+   * 采集单个城市的一轮数据。
+   */
+  private async runForCity(runtime: CityRuntime): Promise<void> {
+    const { city } = runtime;
     const { lat, lon } = city.settlementStation;
 
-    try {
-      logger.info('开始一轮数据采集', { city: city.city });
+    logger.info('开始一轮数据采集', { city: city.city });
 
-      // 1. 并行拉取多种数据源的预报。
-      const [ecmwf, gfs, icon] = await Promise.all([
-        this.ingestion.fetchOpenMeteoEcmwf(lat, lon, 5, city.settlementStation.stationId),
-        this.ingestion.fetchOpenMeteoGfs(lat, lon, 5, city.settlementStation.stationId),
-        this.ingestion.fetchOpenMeteoIcon(lat, lon, 5, city.settlementStation.stationId),
-      ]);
+    // 1. 并行拉取多种数据源的预报。
+    const [ecmwf, gfs, icon] = await Promise.all([
+      this.ingestion.fetchOpenMeteoEcmwf(lat, lon, 5, city.settlementStation.stationId),
+      this.ingestion.fetchOpenMeteoGfs(lat, lon, 5, city.settlementStation.stationId),
+      this.ingestion.fetchOpenMeteoIcon(lat, lon, 5, city.settlementStation.stationId),
+    ]);
 
-      const forecasts: StandardizedForecast[] = [
-        ecmwf,
-        gfs,
-        icon,
-      ].filter((f): f is StandardizedForecast => f !== null);
+    const forecasts: StandardizedForecast[] = [
+      ecmwf,
+      gfs,
+      icon,
+    ].filter((f): f is StandardizedForecast => f !== null);
 
-      if (forecasts.length === 0) {
-        logger.error('所有数据源都失败，无法生成概率分布');
-        return;
-      }
-
-      // 2. 生成多个水平段的概率分布。
-      //    每个水平段使用：对应日期的逐日预报温度 + 该水平段的温度档 bias（DEB）
-      //    + 该水平段的动态 MAE 权重。回测验证（simulate-all-cities, bias+mae）：
-      //    命中率 40.0%、PnL +$2.715（vs baseline 38.1%/+$1.110，+145%）。
-      //    d0/d1/d2/d3 对应"今天/明天/后天/大后天"的日最高温预报。
-      const horizons: ForecastHorizon[] = ['d3', 'd2', 'd1', 'd0'];
-      const dayOffset: Record<ForecastHorizon, number> = { d3: 3, d2: 2, d1: 1, d0: 0 };
-
-      for (const horizon of horizons) {
-        const corrections = this.buildHorizonCorrections(
-          city,
-          forecasts,
-          dayOffset[horizon],
-          horizon,
-        );
-
-        if (corrections.length === 0) {
-          logger.error('所有数据源修正都失败，跳过该水平段', { horizon });
-          continue;
-        }
-
-        // 动态 MAE 权重（该水平段的 ecmwf/gfs 按 1/MAE 缩放，icon 静态 0.2）。
-        // 校准表缺失（如 d3 无样本）时回退到数据源健康权重（现状行为）。
-        const debWeights = this.debCalibration.getMaeWeights('C', horizon);
-        const sourceWeights =
-          debWeights.size > 0 ? debWeights : this.ingestion.getSourceWeights();
-
-        const distribution = this.probabilityEngine.generateDistribution(
-          corrections,
-          sourceWeights,
-          horizon,
-        );
-
-        const payload: RedisWeatherPayload = {
-          city: city.city,
-          horizon,
-          probability: distribution,
-          spatialCorrections: corrections,
-          timestamp: new Date().toISOString(),
-        };
-
-        await writeWeatherData(
-          this.redis,
-          this.config.env.REDIS_KEY_PREFIX,
-          city.city,
-          horizon,
-          payload,
-          this.config.env.DATA_MAX_AGE_SECONDS,
-        );
-      }
-
-      logger.info('本轮数据采集完成并写入 Redis', {
-        city: city.city,
-        sources: forecasts.length,
-        anchorTemp: forecasts[0]?.forecastedMaxTemp?.toFixed(1),
-      });
-    } catch (error) {
-      logError(logger, 'runOnce 执行失败', error);
+    if (forecasts.length === 0) {
+      logger.error('所有数据源都失败，无法生成概率分布', { city: city.city });
+      return;
     }
+
+    // 2. 生成多个水平段的概率分布。
+    //    d0/d1/d2/d3 对应"今天/明天/后天/大后天"的日最高温预报。
+    const horizons: ForecastHorizon[] = ['d3', 'd2', 'd1', 'd0'];
+    const dayOffset: Record<ForecastHorizon, number> = { d3: 3, d2: 2, d1: 1, d0: 0 };
+
+    for (const horizon of horizons) {
+      const corrections = this.buildHorizonCorrections(
+        runtime,
+        forecasts,
+        dayOffset[horizon],
+        horizon,
+      );
+
+      if (corrections.length === 0) {
+        logger.error('所有数据源修正都失败，跳过该水平段', { city: city.city, horizon });
+        continue;
+      }
+
+      // 动态 MAE 权重（该水平段的 ecmwf/gfs 按 1/MAE 缩放，icon 静态 0.2）。
+      // 校准表缺失（如 d3 无样本）时回退到数据源健康权重。
+      const unit = this.unitKey(city);
+      const debWeights = this.debCalibration.getMaeWeights(unit, horizon);
+      const sourceWeights =
+        debWeights.size > 0 ? debWeights : this.ingestion.getSourceWeights();
+
+      const distribution = runtime.probabilityEngine.generateDistribution(
+        corrections,
+        sourceWeights,
+        horizon,
+      );
+
+      const payload: RedisWeatherPayload = {
+        city: city.city,
+        horizon,
+        probability: distribution,
+        spatialCorrections: corrections,
+        timestamp: new Date().toISOString(),
+      };
+
+      await writeWeatherData(
+        this.redis,
+        this.env.REDIS_KEY_PREFIX,
+        city.city,
+        horizon,
+        payload,
+        this.env.DATA_MAX_AGE_SECONDS,
+      );
+    }
+
+    logger.info('本轮数据采集完成并写入 Redis', {
+      city: city.city,
+      sources: forecasts.length,
+      anchorTemp: forecasts[0]?.forecastedMaxTemp?.toFixed(1),
+    });
+  }
+
+  /** 温度单位 key（供 DEB 校准表查询）：华氏城市用 F，摄氏用 C。 */
+  private unitKey(city: CityConfig): 'F' | 'C' {
+    return (city as { unit?: 'F' | 'C' }).unit ?? 'C';
   }
 
   /**
    * 构建某一水平段的偏差修正结果（每数据源一条）。
    *
    * bias 优先级：
-   *   1. DEB 温度档 bias（旧项目 bias.json 4 维 key，James-Stein 收缩）——
-   *      回测最大赢家。符号约定与旧项目 bias.ts 一致：
-   *      bias = mean(预报 - 实际)，修正 = 预报 - bias（把预报拉向实际）。
-   *   2. 回退到本系统 BiasCharacterizationLibrary（历史行为，
-   *      meanBiasC = 实际 - 预报，修正 = 预报 + bias）。
+   *   1. DEB 温度档 bias（该城市该水平段该数据源的预报温度档）。
+   *   2. 回退到本系统 BiasCharacterizationLibrary。
    */
   private buildHorizonCorrections(
-    city: CityConfig,
+    runtime: CityRuntime,
     forecasts: StandardizedForecast[],
     dayOffset: number,
     horizon: ForecastHorizon,
   ): SpatialCorrectionResult[] {
+    const { city, biasLibrary } = runtime;
     const corrections: SpatialCorrectionResult[] = [];
     const season = this.guessSeason(city.timezone);
 
@@ -225,7 +246,7 @@ export class DataHubService {
           biasCorrectedMaxTemp = Math.round((rawForecastedMaxTemp - debBiasC) * 100) / 100;
         } else {
           // 2. 回退：本系统偏差库（历史行为）。
-          const bias = this.biasLibrary.getReliableBias(
+          const bias = biasLibrary.getReliableBias(
             city.city,
             forecast.sourceId,
             season,
@@ -269,7 +290,6 @@ export class DataHubService {
 
   private guessSeason(timezone: string): string {
     // 根据城市时区所在月份判断季节。
-    // 季节影响偏差库的分组，方便按季节精细化校正。
     const now = new Date().toLocaleString('en-US', { timeZone: timezone });
     const month = new Date(now).getMonth() + 1;
 
@@ -279,3 +299,35 @@ export class DataHubService {
     return 'winter';
   }
 }
+
+/**
+ * 命令行入口：`tsx src/data/DataHubService.ts`
+ * 启动 DataHub 数据生产者，定时拉取所有城市气象数据并写入 Redis。
+ */
+async function main(): Promise<void> {
+  const { loadEnv, loadAllCityConfigs } = await import('../common/config-loader.js');
+  const env = loadEnv();
+  const cityConfigs = loadAllCityConfigs();
+
+  logger.info(`加载到 ${cityConfigs.length} 个城市配置`);
+
+  const service = new DataHubService(env, cityConfigs);
+
+  // 优雅关闭：收到 Ctrl+C 或 PM2 stop 时释放资源。
+  process.on('SIGINT', async () => {
+    await service.stop();
+    process.exit(0);
+  });
+  process.on('SIGTERM', async () => {
+    await service.stop();
+    process.exit(0);
+  });
+
+  await service.start();
+}
+
+// 直接运行时启动（tsx 直接执行本文件）。
+main().catch((error) => {
+  logError(logger, 'DataHubService 启动失败', error);
+  process.exit(1);
+});
