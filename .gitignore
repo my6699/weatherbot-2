@@ -28,7 +28,7 @@ src/**/*.js
 *.tar
 tmp-grid/
 
-# 运行时数据（账本/回测/快照不入库；price-history 已跟踪，保留）
+# 运行时数据（账本/回测/快照不入库；price-history 与 predictions.json 保留入库）
 data/trades-*.json
 data/backtest/
 data/backup/
@@ -36,4 +36,3 @@ data/local-history/
 data/server-redis-export.json
 data/markets/
 data/processed/
-data/predictions.json

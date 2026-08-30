@@ -177,6 +177,26 @@ export class DataHubService {
   }
 
   /**
+   * GitHub Actions 定时采集模式：单次完整采集后停止并退出（不进入轮询循环）。
+   * 由 DATAHUB_RUN_ONCE=true 触发，用于 Actions 每小时定时采集并提交数据回仓库。
+   */
+  async runOnceAndExit(): Promise<void> {
+    try {
+      await this.redis.connect();
+    } catch (error) {
+      logError(logger, 'Redis 连接失败，单次采集无法启动', error);
+      process.exit(1);
+    }
+    try {
+      await this.runOnce();
+    } catch (error) {
+      logError(logger, '单次采集失败', error);
+    }
+    await this.stop();
+    process.exit(0);
+  }
+
+  /**
    * 执行一次完整的数据生产流程：循环采集所有城市。
    */
   async runOnce(): Promise<void> {
@@ -554,6 +574,12 @@ async function main(): Promise<void> {
   logger.info(`加载到 ${cityConfigs.length} 个城市配置`);
 
   const service = new DataHubService(env, cityConfigs);
+
+  // GitHub Actions 定时采集模式：单次执行后退出（不进入无限轮询）。
+  if (process.env.DATAHUB_RUN_ONCE === 'true') {
+    await service.runOnceAndExit();
+    return;
+  }
 
   // 优雅关闭：收到 Ctrl+C 或 PM2 stop 时释放资源。
   process.on('SIGINT', async () => {

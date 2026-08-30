@@ -1,0 +1,89 @@
+# ============================================================
+# Weather Data Collection — 定时采集天气预测数据
+#
+# 功能：每小时从 Open-Meteo（ECMWF/GFS/ICON 公开免费 API）拉取
+#       所有已配置城市的天气预报，生成温度桶概率分布，落盘到
+#       data/predictions.json，并把结果 commit + push 回仓库。
+#
+# 安全边界：
+#   - 仅采集数据，不运行策略、不交易下单、无需任何私钥。
+#   - 用 GITHUB_TOKEN 推送（contents: write），不会触发本 workflow
+#     再次运行（GitHub 自动跳过 token 触发的运行），避免无限循环。
+#   - Open-Meteo 免费配额 1 万次/天；每小时 11 城市 × 3 源 = 33 次，
+#     每天 792 次，远低于配额上限。
+#
+# 手动触发：GitHub 仓库 → Actions → Weather Data Collection →
+#           Run workflow → 立即执行一次。
+# ============================================================
+
+name: Weather Data Collection
+
+on:
+  schedule:
+    # 每小时整点（UTC）。北京时间 = UTC+8。
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 防止上一次运行未结束时叠加运行（排队等待，不取消）。
+concurrency:
+  group: weather-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # DataHub 依赖 Redis 写入概率分布（job 结束后自动销毁，无持久化成本）。
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 单次采集所有城市天气预报
+        env:
+          NODE_ENV: production
+          TRADING_MODE: paper
+          DEFAULT_CITY: shanghai
+          REDIS_URL: redis://127.0.0.1:6379
+          REDIS_KEY_PREFIX: weather
+          DATA_MAX_AGE_SECONDS: '86400'
+          DATAHUB_POLL_INTERVAL_SECONDS: '86400'
+          DEB_BIAS_CORRECT: 'true'
+          DISABLED_CITIES: tokyo
+          ENSEMBLE_ENABLED: 'false'
+          # 偏差表随仓库入库（data/bias.json + residual_stats.json），
+          # DebCalibration 通过 OLD_PROJECT_DATA_DIR 读取。
+          OLD_PROJECT_DATA_DIR: ${{ github.workspace }}/data
+          DATAHUB_RUN_ONCE: 'true'
+          LOG_LEVEL: info
+        run: npx tsx src/data/DataHubService.ts
+
+      - name: 提交采集结果回仓库
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "无数据变化，跳过提交"
+          else
+            git commit -m "data: 定时采集天气预测 $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push
+          fi
