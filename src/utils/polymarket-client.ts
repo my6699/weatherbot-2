@@ -238,16 +238,34 @@ export class PolymarketClient {
     }
   }
 
-  /** 从 question 文本里判断它是否属于某个温度桶（简化匹配）。 */
-  isTempMatchesBucket(question: string, bucket: TemperatureBucket): boolean {
-    // 简化策略：先尝试 label，再尝试桶边界数字。
-    if (bucket.label && question.includes(bucket.label)) return true;
-
-    if (bucket.minTempC !== null && question.includes(String(bucket.minTempC))) return true;
-    if (bucket.maxTempC !== null && question.includes(String(bucket.maxTempC))) return true;
-    return false;
+  /**
+   * 获取订单簿深度 + 估算买入 YES 的滑点成本。
+   *
+   * 返回 bid/ask 两侧名义金额（$）与"可用流动性"（两侧较小值），以及按
+   * 参考下单规模估算的滑点成本（占价格比例）。
+   * 用于决策引擎的"流动性过滤 + 滑点成本"：深度不足或滑点过高则不开仓。
+   * API 失败返回 null（调用方按"无流动性"保守处理）。
+   */
+  async fetchOrderBookDepth(
+    tokenId: string,
+    referenceSizeUsd = 500,
+  ): Promise<OrderBookDepth | null> {
+    try {
+      const data = await requestJson<{ bids?: unknown; asks?: unknown }>(
+        `https://clob.polymarket.com/book?token_id=${tokenId}`,
+        this.timeoutMs,
+      );
+      const bidTotal = sumBookUsd(data?.bids);
+      const askTotal = sumBookUsd(data?.asks);
+      const liquidityUsd = Math.min(bidTotal, askTotal);
+      const slippage = estimateSlippage(askTotal, referenceSizeUsd);
+      return { bidTotal, askTotal, liquidityUsd, slippage };
+    } catch {
+      return null;
+    }
   }
-}
+
+  }
 
 function parseOutcomePrices(raw?: string): number[] {
   if (!raw) return [];
@@ -276,6 +294,49 @@ function sumBookLevels(rows: unknown): number {
     }
   }
   return total;
+}
+
+/** 订单簿深度 + 滑点信息（金额单位：$）。 */
+export interface OrderBookDepth {
+  bidTotal: number;
+  askTotal: number;
+  /** 可用流动性 = 两侧深度较小值（保守口径，防止单边深度假象）。 */
+  liquidityUsd: number;
+  /** 估算滑点成本（占位格比例，0-1）。 */
+  slippage: number;
+}
+
+/** 汇总订单簿的名义金额（$）：price × size 求和。 */
+function sumBookUsd(rows: unknown): number {
+  if (!Array.isArray(rows)) return 0;
+  let total = 0;
+  for (const row of rows) {
+    let price = Number.NaN;
+    let size = Number.NaN;
+    if (Array.isArray(row)) {
+      price = Number(row[0]);
+      size = Number(row[1]);
+    } else if (row && typeof row === 'object') {
+      const r = row as { price?: unknown; size?: unknown };
+      price = Number(r.price);
+      size = Number(r.size);
+    }
+    if (Number.isFinite(price) && Number.isFinite(size)) total += price * size;
+  }
+  return total;
+}
+
+/**
+ * 按可成交深度（ask 侧）相对下单规模的比值估算市价穿透滑点。
+ * 深度越浅、下单越接近深度上限，滑点越高；几乎无深度按最高 5% 处理。
+ */
+function estimateSlippage(askTotalUsd: number, sizeUsd: number): number {
+  if (askTotalUsd <= 0) return 0.05;
+  const ratio = sizeUsd / askTotalUsd;
+  if (ratio <= 0.2) return 0.003; // 深度充足，滑点 ~0.3%
+  if (ratio <= 0.5) return 0.008; // 中等，~0.8%
+  if (ratio <= 1) return 0.015; // 深度接近订单，~1.5%
+  return 0.03; // 深度不足，~3%
 }
 
 export function getCurrentTempBucketFromLabel(

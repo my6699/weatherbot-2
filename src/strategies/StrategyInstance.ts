@@ -362,6 +362,8 @@ export class StrategyInstance {
       distribution,
       candidates,
       tradingMode: this.config.env.TRADING_MODE,
+      // 旧架构残留入口（paper-only）：用虚拟资金池，凯利动态以 env 为准。
+      bankrollUsd: Number(process.env.BANKROLL_USD ?? '100'),
     });
 
     if (!decision) {

@@ -22,6 +22,16 @@ import { createModuleLogger } from '../common/logger.js';
 
 const logger = createModuleLogger('AdaptiveProbabilityEngine');
 
+/** 集合预报融合输入：成员当天最高温 + 融合权重。 */
+export interface EnsembleInput {
+  model: string;
+  memberCount: number;
+  // 当天所有成员最高温（℃，已应用城市偏差平移）。
+  memberTemps: number[];
+  // 融合权重（0-1）：最终概率 = (1-w)×高斯 + w×ensemble。
+  weight: number;
+}
+
 export class AdaptiveProbabilityEngine {
   constructor(
     private readonly city: CityId,
@@ -44,28 +54,66 @@ export class AdaptiveProbabilityEngine {
     sourceWeights: Map<string, number>,
     horizon: ForecastHorizon,
     residualSigmaC?: number,
+    ensemble?: EnsembleInput,
   ): ProbabilityDistribution {
     // 筛选出有有效修正结果的数据源。
     const validCorrections = corrections.filter(
       (c) => c.confidence > 0 && Number.isFinite(c.spatialCorrectedMaxTemp),
     );
 
-    if (validCorrections.length === 0) {
+    if (validCorrections.length === 0 && !ensemble) {
       // 没有可用修正时，返回一个均匀分布（各桶概率相等）作为兜底。
       // 策略进程看到均匀分布会知道"数据不可靠"，应暂停开仓。
       return this.createUniformDistribution(horizon);
     }
 
     // 加权计算最终锚温度（按 sourceWeights 加权）。
+    // 若没有任何确定性源但有 ensemble，则锚用 ensemble mean。
     const { anchorTempC, effectiveDispersionC, consensusLevel, sourceContributions } =
-      this.computeAnchorWithDispersion(validCorrections, sourceWeights, residualSigmaC);
+      validCorrections.length > 0
+        ? this.computeAnchorWithDispersion(validCorrections, sourceWeights, residualSigmaC)
+        : this.ensembleAnchorFallback(ensemble!);
 
-    // 计算每个桶的概率。
-    const buckets = this.computeBucketProbabilities(
+    // 高斯路径：以锚 ± σ 正态拟合算桶概率。
+    const gaussianBuckets = this.computeBucketProbabilities(
       anchorTempC,
       effectiveDispersionC,
       validCorrections,
     );
+
+    // 集合预报路径：KDE 核密度（仅启用且提供成员时）。
+    let buckets = gaussianBuckets;
+    let ensembleInfo: ProbabilityDistribution['ensemble'];
+
+    if (ensemble && ensemble.memberTemps.length > 0) {
+      const kde = this.ensembleToBucketProbabilities(ensemble.memberTemps);
+      const w = Math.max(0, Math.min(1, ensemble.weight));
+      // 融合：最终 = (1-w)×高斯 + w×KDE，再归一化。
+      buckets = this.buckets.map((b, i) => {
+        const g = gaussianBuckets[i]?.probability ?? 0;
+        const e = kde.probabilities[i]?.probability ?? 0;
+        return { bucket: b, probability: (1 - w) * g + w * e };
+      });
+      const total = buckets.reduce((s, b) => s + b.probability, 0);
+      if (total > 0) {
+        for (const b of buckets) b.probability = b.probability / total;
+      }
+      ensembleInfo = {
+        model: ensemble.model,
+        memberCount: ensemble.memberCount,
+        meanTempC: kde.meanTempC,
+        dispersionC: kde.dispersionC,
+        probabilities: kde.probabilities,
+      };
+      logger.info('集合预报已融合进概率', {
+        city: this.city,
+        model: ensemble.model,
+        members: ensemble.memberCount,
+        weight: w,
+        meanTempC: kde.meanTempC,
+        dispersionC: kde.dispersionC,
+      });
+    }
 
     return {
       city: this.city,
@@ -76,7 +124,35 @@ export class AdaptiveProbabilityEngine {
       consensusLevel,
       buckets,
       sourceContributions,
+      ...(ensembleInfo ? { ensemble: ensembleInfo } : {}),
       generatedAt: new Date(),
+    };
+  }
+
+  /** 只有 ensemble、没有确定性源时的锚兜底：用成员均值 + 成员离散度。 */
+  private ensembleAnchorFallback(ensemble: EnsembleInput): {
+    anchorTempC: number;
+    effectiveDispersionC: number;
+    consensusLevel: number;
+    sourceContributions: ProbabilityDistribution['sourceContributions'];
+  } {
+    const temps = ensemble.memberTemps.filter((t) => Number.isFinite(t));
+    const mean = temps.reduce((a, b) => a + b, 0) / Math.max(1, temps.length);
+    const sd = Math.sqrt(
+      temps.reduce((s, t) => s + (t - mean) * (t - mean), 0) / Math.max(1, temps.length),
+    );
+    return {
+      anchorTempC: Math.round(mean * 100) / 100,
+      effectiveDispersionC: Math.max(0.5, sd),
+      consensusLevel: 0.3,
+      sourceContributions: [
+        {
+          sourceId: 'open-meteo-ensemble',
+          correctedTempC: Math.round(mean * 100) / 100,
+          weight: 1.0,
+          status: 'healthy',
+        },
+      ],
     };
   }
 
@@ -215,6 +291,70 @@ export class AdaptiveProbabilityEngine {
     const upper = bucket.maxTempC !== null ? cdf(bucket.maxTempC) : 1;
     const lower = bucket.minTempC !== null ? cdf(bucket.minTempC) : 0;
 
+    return Math.max(0, upper - lower);
+  }
+
+  /**
+   * 用集合成员做核密度估计（KDE）算桶概率。
+   *
+   * 每个成员温度作为一个高斯核的中心，对每个温度桶做核积分，再取成员平均。
+   * 相比"单点 + 高斯拟合"（只用均值±σ），KDE 保留集合的真实分布形状
+   * （偏态、多峰），尾部概率（极端桶）更贴近真实。
+   *
+   * 带宽用 Scott 规则：h = 1.06·σ·M^(-1/5)，下限 0.5℃ 防止过窄。
+   */
+  private ensembleToBucketProbabilities(memberTemps: number[]): {
+    probabilities: ProbabilityDistribution['buckets'];
+    meanTempC: number;
+    dispersionC: number;
+  } {
+    const temps = memberTemps.filter((t) => Number.isFinite(t));
+    if (temps.length === 0) {
+      return {
+        probabilities: this.buckets.map((bucket) => ({
+          bucket,
+          probability: 1 / this.buckets.length,
+        })),
+        meanTempC: 0,
+        dispersionC: 10,
+      };
+    }
+
+    const M = temps.length;
+    const meanT = temps.reduce((a, b) => a + b, 0) / M;
+    const variance = temps.reduce((s, t) => s + (t - meanT) * (t - meanT), 0) / M;
+    const sd = Math.sqrt(variance);
+    const h = Math.max(0.5, 1.06 * sd * Math.pow(M, -0.2));
+
+    const probabilities = this.buckets.map((bucket) => {
+      let p = 0;
+      for (const t of temps) {
+        p += this.bucketKernelProbability(bucket, t, h);
+      }
+      return { bucket, probability: p / M };
+    });
+
+    const total = probabilities.reduce((s, b) => s + b.probability, 0);
+    if (total > 0) {
+      for (const b of probabilities) b.probability = b.probability / total;
+    }
+
+    return {
+      probabilities,
+      meanTempC: Math.round(meanT * 100) / 100,
+      dispersionC: Math.round(sd * 100) / 100,
+    };
+  }
+
+  /** 高斯核（中心 center、带宽 h）在一个温度桶区间内的积分概率。 */
+  private bucketKernelProbability(
+    bucket: TemperatureBucket,
+    center: number,
+    h: number,
+  ): number {
+    const cdf = (x: number): number => 0.5 * (1 + erf((x - center) / (h * Math.SQRT2)));
+    const upper = bucket.maxTempC !== null ? cdf(bucket.maxTempC) : 1;
+    const lower = bucket.minTempC !== null ? cdf(bucket.minTempC) : 0;
     return Math.max(0, upper - lower);
   }
 

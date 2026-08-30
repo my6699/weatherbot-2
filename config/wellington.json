@@ -187,7 +187,7 @@
     "dispersionPenalty": 1.4
   },
   "risk": {
-    "maxPositionUsd": 25,
-    "maxCityExposureUsd": 100
+    "maxPositionUsd": 30,
+    "maxCityExposureUsd": 30
   }
 }

@@ -1,4 +1,4 @@
-// PM2 进程管理配置。
+// PM2 进程管理配置（VPS 版本，与 VPS ~/weatherbot-2/ecosystem.config.cjs 对齐）。
 //
 // 布局（2026-08-08 优化：从 22 进程减至 3 进程，解决低配服务器内存过载）：
 //   1 个 DataHub（唯一数据生产者，自动采集所有已配置城市）
@@ -47,6 +47,8 @@ module.exports = {
       time: true,
       env: {
         NODE_ENV: 'production',
+        // 双桶入场成本上限 0.65 → 0.75（2026-08-12 回测：EV 双窗口 +68~100%，0.75 起平台）
+        MAX_ENTRY_COST: '0.75',
       },
     },
 

@@ -27,6 +27,9 @@ interface DailyReport {
   todayPnL: number;
   cumulativePnL: number;
   hitRate: string;
+  // 补结算（viaSettleBackfill）单独统计，不混入命中率/盈亏口径。
+  backfillCount: number;
+  backfillPnL: number;
   cityBreakdown: Array<{
     city: string;
     trades: number;
@@ -42,10 +45,17 @@ function generateReport(): DailyReport {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // 今日结算统计
+  // 补结算标记（viaSettleBackfill）：仅表示"结算由补结算机制补记"（平仓后/重启失联后），
+  // 这些记录的 pnl 按真实平仓实现价算，是有效战绩，**纳入统计**，只是加标注便于排查。
+  const backfillSettled = todaySettled.filter((t) => t.viaSettleBackfill);
+
+  // 今日结算统计（含补结算）
   const hits = todaySettled.filter((t) => t.hit === true).length;
   const misses = todaySettled.filter((t) => t.hit === false).length;
   const todayPnL = todaySettled
+    .filter((t) => t.pnl !== null)
+    .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  const backfillPnL = backfillSettled
     .filter((t) => t.pnl !== null)
     .reduce((sum, t) => sum + (t.pnl ?? 0), 0);
 
@@ -77,6 +87,8 @@ function generateReport(): DailyReport {
     todayPnL,
     cumulativePnL: getTotalPnL(),
     hitRate,
+    backfillCount: backfillSettled.length,
+    backfillPnL,
     cityBreakdown,
   };
 }
@@ -98,7 +110,12 @@ function formatReport(report: DailyReport): string {
   msg += `- 命中率：**${report.hitRate}**\n`;
   msg += `- 今日盈亏：**${pnlEmoji} ${pnlSign}$${report.todayPnL.toFixed(2)}**\n`;
   msg += `- 累计盈亏：**${cumPnlSign}$${report.cumulativePnL.toFixed(2)}**\n`;
-  msg += `- 未结算持仓：**${report.pending}** 笔\n\n`;
+  msg += `- 未结算持仓：**${report.pending}** 笔\n`;
+  if (report.backfillCount > 0) {
+    const bSign = report.backfillPnL >= 0 ? '+' : '';
+    msg += `- 其中补结算补记（平仓/失联后补记，按平仓实现价计入）：**${report.backfillCount}** 笔，${bSign}$${report.backfillPnL.toFixed(2)}\n`;
+  }
+  msg += `\n`;
 
   // 分城市明细
   if (report.cityBreakdown.length > 0) {
@@ -147,9 +164,13 @@ async function main(): Promise<void> {
     logger.warn('企业微信报告发送失败（可能未配置 WECOM_WEBHOOK_URL）');
   }
 
-  // 如果今天没有结算，也发一条简短通知
+  // 如果今天没有正常结算，也发一条简短通知
   if (report.settledToday === 0) {
-    const shortMsg = `🌤 ${report.date} 天气策略报告：今日无结算，累计盈亏 ${report.cumulativePnL >= 0 ? '+' : ''}$${report.cumulativePnL.toFixed(2)}，${report.pending} 笔持仓未结算。`;
+    const backfillNote =
+      report.backfillCount > 0
+        ? `，其中补结算补记 ${report.backfillCount} 笔 ${report.backfillPnL >= 0 ? '+' : ''}$${report.backfillPnL.toFixed(2)}`
+        : '';
+    const shortMsg = `🌤 ${report.date} 天气策略报告：今日无结算，累计盈亏 ${report.cumulativePnL >= 0 ? '+' : ''}$${report.cumulativePnL.toFixed(2)}，${report.pending} 笔持仓未结算。${backfillNote}`;
     await sendWeComMarkdown(shortMsg);
   }
 }

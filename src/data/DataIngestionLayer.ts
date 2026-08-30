@@ -11,7 +11,11 @@
 //   连续失败 5 次后标记为 disabled，不再请求该数据源。
 
 import axios from 'axios';
-import type { StandardizedForecast, NearbyStationObservation } from '../common/types.js';
+import type {
+  StandardizedForecast,
+  NearbyStationObservation,
+  EnsembleDailyForecast,
+} from '../common/types.js';
 import { createModuleLogger, logError } from '../common/logger.js';
 
 const logger = createModuleLogger('DataIngestionLayer');
@@ -34,6 +38,7 @@ export class DataIngestionLayer {
     this.initSourceStatus('open-meteo-ecmwf');
     this.initSourceStatus('open-meteo-gfs');
     this.initSourceStatus('open-meteo-icon');
+    this.initSourceStatus('open-meteo-ensemble');
     this.initSourceStatus('metar');
   }
 
@@ -78,6 +83,32 @@ export class DataIngestionLayer {
     lon: number,
   ): Promise<StandardizedForecast | null> {
     return this.safeFetch('metar', () => this.fetchMetarObservation(stationId, lat, lon));
+  }
+
+  /**
+   * 拉取 Open-Meteo 集合预报（ensemble）的逐日最高温。
+   *
+   * 与确定性模型不同，ensemble 返回 N 个"扰动成员"，代表同一时刻的 N 种可能天气。
+   * 用成员分布直接估计桶概率，比单点预报 + 高斯拟合更贴近真实不确定性，
+   * 尾部（极端温度）概率尤其准。
+   *
+   * 端点：https://ensemble-api.open-meteo.com/v1/ensemble
+   * 返回 hourly temperature_2m + temperature_2m_memberNN，按 UTC 自然日分组取每成员 max。
+   *
+   * @param model 集合模型名，如 ecmwf_ifs025（ECMWF 51 成员）/ gfs025（GFS 31 成员）/ icon_seamless（ICON 40 成员）。
+   * @param maxMembers 实际使用的成员数上限（0 = 全部）。请求体积大时用于抽样降载。
+   */
+  async fetchEnsembleDailyMaxes(
+    lat: number,
+    lon: number,
+    forecastDays: number,
+    targetStation: string,
+    model = 'ecmwf_ifs025',
+    maxMembers = 0,
+  ): Promise<EnsembleDailyForecast | null> {
+    return this.safeFetch('open-meteo-ensemble', () =>
+      this.fetchEnsembleModel(lat, lon, forecastDays, targetStation, model, maxMembers),
+    );
   }
 
   /**
@@ -361,6 +392,111 @@ export class DataIngestionLayer {
   }
 
   /**
+   * 调用 Open-Meteo ensemble API 获取集合预报逐日最高温。
+   *
+   * 响应结构（hourly）：
+   *   time: ["2026-08-15T00:00", ...]
+   *   temperature_2m: [.. ensemble mean ..]
+   *   temperature_2m_member01: [..成员1..]
+   *   temperature_2m_memberNN: [...]
+   * 每个成员按 UTC 自然日分组，取当天最高温作为该成员的日最高温预报。
+   */
+  private async fetchEnsembleModel(
+    lat: number,
+    lon: number,
+    forecastDays: number,
+    targetStation: string,
+    model: string,
+    maxMembers: number,
+  ): Promise<EnsembleDailyForecast | null> {
+    const response = await axios.get<{
+      hourly?: Record<string, unknown>;
+    }>('https://ensemble-api.open-meteo.com/v1/ensemble', {
+      params: {
+        latitude: lat,
+        longitude: lon,
+        hourly: 'temperature_2m',
+        models: model,
+        timezone: 'UTC',
+        forecast_days: Math.max(forecastDays, 1),
+      },
+      timeout: 15_000,
+    });
+
+    const hourly = response.data?.hourly;
+    if (!hourly || !Array.isArray(hourly.time) || hourly.time.length === 0) {
+      return null;
+    }
+    const times = hourly.time as string[];
+
+    // 收集所有成员 key（temperature_2m_memberNN）。
+    const memberKeys = Object.keys(hourly).filter(
+      (k) => /^temperature_2m_member\d+$/.test(k),
+    );
+    if (memberKeys.length === 0) {
+      logger.warn('ensemble 响应无成员数据', { model });
+      return null;
+    }
+
+    // 按 UTC 自然日建立日期 → 列下标映射。
+    const dayIndex = new Map<string, number>();
+    const dayDates: string[] = [];
+    for (const t of times) {
+      const day = t.slice(0, 10);
+      if (!dayIndex.has(day)) {
+        dayIndex.set(day, dayDates.length);
+        dayDates.push(day);
+      }
+    }
+
+    // 抽取成员数组（含均匀抽样降载）。
+    const memberArrays = memberKeys.map(
+      (k) => (hourly[k] as (number | null)[] | undefined) ?? [],
+    );
+    const selected =
+      maxMembers > 0 && memberArrays.length > maxMembers
+        ? pickEvery(memberArrays, maxMembers)
+        : memberArrays;
+
+    // 每个成员 → 每天最高温。
+    const dayTemps: number[][] = [];
+    for (const arr of selected) {
+      const perDay = new Array<number | null>(dayDates.length).fill(null);
+      for (let i = 0; i < times.length && i < arr.length; i++) {
+        const v = arr[i];
+        if (v === null || v === undefined || !Number.isFinite(v)) continue;
+        const d = dayIndex.get(times[i]!.slice(0, 10));
+        if (d === undefined) continue;
+        perDay[d] = Math.max(perDay[d] ?? -Infinity, v);
+      }
+      // 过滤掉完全无数据的成员。
+      if (perDay.some((v) => v !== null)) {
+        dayTemps.push(perDay.map((v) => (v === null ? NaN : Math.round(v * 100) / 100)));
+      }
+    }
+
+    if (dayTemps.length === 0) return null;
+
+    // ensemble mean：所有成员每天的平均。
+    const mean = dayDates.map((_, d) => {
+      const vals: number[] = dayTemps.map((m) => m[d]).filter(isFiniteNumber);
+      return vals.length > 0
+        ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100
+        : NaN;
+    });
+
+    return {
+      sourceId: 'open-meteo-ensemble',
+      model,
+      targetStation,
+      issuanceTime: new Date(times[0] ?? Date.now()),
+      memberCount: dayTemps.length,
+      dayTemps,
+      mean,
+    };
+  }
+
+  /**
    * 调用 avwx.rest 获取 METAR 实时温度观测。
    *
    * METAR 是机场气象报，每 30 分钟更新一次，能反映真实温度。
@@ -435,4 +571,23 @@ export class DataIngestionLayer {
 
     return null;
   }
+}
+
+/**
+ * 从数组里均匀抽取 `count` 个元素（成员降载用）。
+ * 例如 51 个成员抽 10 个：按下标 0,5,10,... 均匀取，既保留分布宽度又降请求体积。
+ */
+function pickEvery<T>(arr: T[], count: number): T[] {
+  if (count <= 0 || arr.length <= count) return arr;
+  const out: T[] = [];
+  const step = (arr.length - 1) / (count - 1);
+  for (let i = 0; i < count; i++) {
+    out.push(arr[Math.round(i * step)]!);
+  }
+  return out;
+}
+
+/** 类型守卫：判断一个未知值是否为有限数字（配合 noUncheckedIndexedAccess 过滤数组）。 */
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
 }

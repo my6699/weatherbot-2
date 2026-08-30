@@ -12,7 +12,7 @@
 //
 // 安全：私钥只从环境变量读取，绝不写入代码/Git。
 
-import { Chain, ClobClient, OrderType, Side, SignatureType } from '@polymarket/clob-client';
+import { AssetType, Chain, ClobClient, OrderType, Side, SignatureType } from '@polymarket/clob-client';
 import { createWalletClient, http } from 'viem';
 import { polygon, polygonAmoy } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -296,6 +296,30 @@ function toLevels(rows: unknown): OrderLevel[] {
     }
   }
   return out;
+}
+
+/**
+ * 查询 CLOB 账户可用 USDC 余额（$）。
+ * 用途：凯利动态投注的资金池基准 + 全局余额保护（余额不足时跳过开仓）。
+ * 注意：getBalanceAllowance 参数必须用下划线 `asset_type`（camelCase 会返回 400）。
+ * 返回 null 表示查询失败（网络/认证），调用方应保守处理（跳过开仓）。
+ */
+export async function getClobUsdcBalance(): Promise<number | null> {
+  try {
+    const client = await getClobClient();
+    const resp = (await client.getBalanceAllowance({
+      asset_type: AssetType.COLLATERAL,
+    })) as { balance?: string | number } | null;
+    const balance = Number(resp?.balance ?? 0);
+    if (!Number.isFinite(balance) || balance < 0) {
+      logger.warn('CLOB 余额返回异常', { balance: resp?.balance });
+      return null;
+    }
+    return balance;
+  } catch (error) {
+    logError(logger, '查询 CLOB 余额失败', error);
+    return null;
+  }
 }
 
 /**

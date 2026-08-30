@@ -234,10 +234,10 @@
     "spatialSupport": 1.5,
     "relativeValue": 1.1,
     "probabilityGap": 1.3,
-    "dispersionPenalty": 1.4
+    "dispersionPenalty": 1.0
   },
   "risk": {
-    "maxPositionUsd": 25,
-    "maxCityExposureUsd": 100
+    "maxPositionUsd": 30,
+    "maxCityExposureUsd": 30
   }
 }

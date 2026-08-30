@@ -1,18 +1,13 @@
-// 这个文件实现 D0 离场策略（ExitStrategy）——双桶区间策略的"两段式平仓"。
+// 这个文件实现 D0 离场策略（ExitStrategy）——双桶区间策略的"持有到结算"。
 //
-// 核心目标：峰值前看 0.85 目标，峰值确认后直接市价平仓，绝不拖到结算。
+// 核心目标：持有到结算（赢方 1.0 / 输方 0.0），不提前平仓。
 //
-// 两段式平仓（2026-08-07 按用户方案）：
-//   阶段一（峰值前）：只判断双桶区间目标——两桶 bid 之和 >= 0.85 即全部平仓。
-//     不到 0.85 就继续持有（不做止损、不做软止盈、不按钟点强制平仓）。
-//     原因：峰值前的价格波动大多是噪音，正确的区间经常在峰值前都到不了 0.85
-//     （例如 08-05 市场最热对 33+34 全天 0.72~0.83，结算前才拉满）。
-//   阶段二（峰值后）：到达该城市"历史预测的峰值最晚时间"（hardExitLocalTime），
-//     直接市价平仓。不加确认缓冲——峰值一旦确认市场就走完了，没有更好的
-//     离场机会，按历史预测时间触发最稳。区间对的自然 >= 0.85（赢家桶 ~1.0），
-//     区间错的割肉走人，避免拖到结算归零。
+// 策略（2026-08-17 按回测正期望验证结果）：
+//   回测对比显示 0.85 提前平仓净效果为负（-$0.216 / 69 笔），
+//   6/7 有差异的城市关闭 0.85 后表现更好。
+//   不再有峰值时间强制平仓、不再有 0.85 提前止盈——纯持有到结算 ROI 最高。
 //
-// 执行方式：阶段二峰值时间到点一次性全部卖出（不再做 TWAP 拆单，避免错过窗口）。
+// 价格止损（STOP_LOSS_K）可在 .env 中开启，当前生产配置 K=0（关闭）。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,16 +19,22 @@ import type {
 } from '../common/types.js';
 import type { CityConfig } from '../common/config-loader.js';
 import { createModuleLogger } from '../common/logger.js';
-import { isTimeToExit, parseTimeString } from '../utils/time.js';
 
 const logger = createModuleLogger('ExitStrategy');
 
-// 双桶区间策略的退出目标：两桶 bid 之和 >= 0.85 即平仓。
-const INTERVAL_EXIT_SUM = 0.85;
+// 价格止损（2026-08-11 回测正优化：K=0.7 → 固定口径 ROI 11.9%→21.7%，凯利口径 3.2%→5.7%）。
+//   规则：双桶 bid 之和 <= 入场成本 × STOP_LOSS_K → 止损离场，
+//   避免"开仓后一路阴跌、从没涨过成本"的坏单持有到结算吃满亏损（回测 5 笔触发，净效果为正）。
+// 分时段对齐生产既有约束：D0 当天本地 15:00 前禁用价格止损——当日最高温尚未形成，
+//   bid 下跌多为日内噪音，避免 Miami 7-31 式误杀（单次 hrrr dip 在 12:00 被砍、桶后来到 96.5°F）；
+//   D0 15:00 后与其他持仓日（D2/D1，bid 下跌是市场对最新预报的真实重定价）止损可用。
+//   0 = 关闭（维持原行为）。生产 .env 用 STOP_LOSS_K=0。
+const STOP_LOSS_K = Number(process.env.STOP_LOSS_K ?? '0');
+// D0 当天此本地时刻（24h）起才允许价格止损。
+const STOP_LOSS_LOCAL_HOUR = 15;
 
 export type ExitTrigger =
-  | 'interval_target' // 阶段一：两桶 bid 之和 >= 0.85
-  | 'peak_confirmed'; // 阶段二：峰值确认后直接市价平仓
+  | 'stop_loss'; // 价格止损：双桶 bid 之和 <= 入场成本 × K（D0 15:00 前禁用）
 
 export interface ExitSignal {
   trigger: ExitTrigger;
@@ -72,43 +73,37 @@ export class ExitStrategy {
    */
   checkExit(input: ExitCheckInput): ExitSignal | null {
     const { timezone, currentMarket } = input;
-    const exitConfig = this.loadExitConfig(input.city);
 
-    // 阶段一（峰值前）：只判断双桶区间目标。
-    // 两桶 bid 之和 >= 0.85 即全部平仓；不到就继续持有，
-    // 等到峰值确认后再按市价离场（阶段二）。
-    if (input.bucketBids && input.bucketBids.length >= 2) {
+    // 价格止损（阶段一之前）：双桶 bid 之和 <= 入场成本 × K → 止损离场。
+    // 分时段：D0 当天本地 15:00 前禁用（当日最高温未形成，bid 下跌多为噪音）；
+    //   D2/D1 持仓不受限（bid 下跌是市场对最新预报的真实重定价）。
+    if (
+      STOP_LOSS_K > 0 &&
+      input.bucketBids &&
+      input.bucketBids.length >= 2 &&
+      this.priceStopEnabled(timezone, input.targetDate)
+    ) {
       const sum = input.bucketBids.reduce((acc, b) => acc + b.bid, 0);
-      if (sum >= INTERVAL_EXIT_SUM) {
+      const stopLevel = input.position.entryPrice * STOP_LOSS_K;
+      if (sum <= stopLevel) {
         return {
-          trigger: 'interval_target',
+          trigger: 'stop_loss',
           sellFraction: 1,
           limitPrice: currentMarket.yesPrice,
-          reason: `区间目标达成：两桶 bid 之和 ${sum.toFixed(2)} >= ${INTERVAL_EXIT_SUM}，全部平仓`,
+          reason: `价格止损：两桶 bid 之和 ${sum.toFixed(3)} <= 入场成本 ${input.position.entryPrice.toFixed(3)} × ${STOP_LOSS_K}（止损线 ${stopLevel.toFixed(3)}），全部平仓`,
         };
       }
     }
 
-    // 阶段二（峰值后）：到达该城市历史预测的峰值最晚时间，直接市价平仓。
-    // 只在目标日期当天（D0）生效，避免 D2/D1 持仓被"当天时间过峰值"误平仓。
-    if (
-      this.isSettlementDay(timezone, input.targetDate) &&
-      isTimeToExit(timezone, exitConfig.hardExitLocalTime)
-    ) {
-      return {
-        trigger: 'peak_confirmed',
-        sellFraction: 1,
-        limitPrice: currentMarket.yesPrice,
-        reason: `峰值时间 ${exitConfig.hardExitLocalTime} 已到，按市价全部平仓`,
-      };
-    }
+    // 持有到结算：不提前平仓，与回测策略保持一致。
+    // 结算时赢方付 1.0、输方付 0.0，由结算流程自然处理。
 
     return null;
   }
 
   /**
-   * 生成离场计划。两段式策略下：阶段一靠 0.85 目标自动触发，
-   * 阶段二在确认时间一次性全部平仓（不做 TWAP 拆单）。
+   * 生成离场计划。纯持有到结算策略：不提前平仓，
+   * 持有到结算（1.0/0.0），无强制平仓时间。
    */
   buildExitPlan(
     city: CityId,
@@ -116,24 +111,20 @@ export class ExitStrategy {
     position: OpenPosition,
     peakLocalTime: string,
   ): ExitPlan {
-    const exitConfig = this.loadExitConfig(city);
-
-    const hardExitAt = new Date();
-    const hardConfig = parseTimeString(exitConfig.hardExitLocalTime);
-    hardExitAt.setHours(hardConfig.hour, hardConfig.minute, 0, 0);
+    const settlementAt = new Date();
+    settlementAt.setHours(23, 59, 0, 0);
 
     logger.info('生成离场计划', {
       city,
-      hardExitAt: hardExitAt.toLocaleString(),
-      trigger: '峰值时间一次性全部平仓',
+      strategy: '持有到结算',
+      trigger: '结算',
     });
 
     return {
       positionId: position.positionId,
       city,
-      // 两段式：峰值前无软止盈窗口，软开始时间与确认时间相同。
-      softExitStartsAt: hardExitAt,
-      hardExitAt,
+      softExitStartsAt: settlementAt,
+      hardExitAt: settlementAt,
       twapSlices: 1,
       takeProfitRatio: 0,
       completed: false,
@@ -155,6 +146,27 @@ export class ExitStrategy {
       day: '2-digit',
     });
     return formatter.format(new Date()) === targetDate;
+  }
+
+  /**
+   * 价格止损分时段门控：
+   *   - D2/D1 持仓：始终允许（bid 下跌是市场对最新预报的真实重定价，止损可信）；
+   *   - D0 当天：本地 STOP_LOSS_LOCAL_HOUR（15:00）前禁用——当日最高温尚未形成，
+   *     bid 下跌多为日内噪音，避免把"还没到顶的桶"误杀（Miami 7-31 教训）。
+   */
+  private priceStopEnabled(timezone: string, targetDate: string): boolean {
+    if (!this.isSettlementDay(timezone, targetDate)) return true;
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .format(new Date())
+      .split(':');
+    const hour = Number(parts[0] ?? '0');
+    return hour >= STOP_LOSS_LOCAL_HOUR;
   }
 
   private loadExitConfig(city: CityId): {
@@ -180,7 +192,8 @@ export class ExitStrategy {
     try {
       const file = path.join(this.projectRoot, 'config', 'city_peak_times.json');
       if (fs.existsSync(file)) {
-        const json = JSON.parse(fs.readFileSync(file, 'utf8')) as {
+        // 去掉 UTF-8 BOM（EF BB BF），Windows 记事本保存会带上，JSON.parse 会直接失败。
+        const json = JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '')) as {
           cities?: Record<
             string,
             { exitStrategy?: Partial<typeof defaults> }

@@ -154,9 +154,10 @@ const BIAS_SOURCE_MAP: Record<string, 'best' | 'ecmwf' | 'hrrr'> = {
   icon_seamless: 'best',
 };
 
-// 双桶入库成本上限：两个桶的 YES 价格之和 ≤ 0.65。
+// 双桶入库成本上限：两个桶的 YES 价格之和 ≤ MAX_ENTRY_COST。
 // 成本过高说明市场已高度确信，没有足够上行空间（与引擎 MAX_ENTRY_COST 对齐）。
-const MAX_ENTRY_COST = 0.65;
+// 用法：MAX_ENTRY_COST=0.70 npx tsx scripts/simulate-all-cities.ts（默认 0.65）
+const MAX_ENTRY_COST = Number(process.env.MAX_ENTRY_COST ?? '0.65');
 
 // ==================== 预测漂移离场（2026-08-09 实验开关） ====================
 //
@@ -179,6 +180,31 @@ const DRIFT_MIN_STREAK = Number(process.env.DRIFT_MIN_STREAK ?? '1');
 // 与 DRIFT_EXIT 互斥：EXIT_PEAK_HOURS_BEFORE>0 时优先峰值平仓，忽略 DRIFT_EXIT。
 // 城市 config 缺失或平仓时刻早于入场时刻时回退基线退出逻辑。
 const EXIT_PEAK_HOURS_BEFORE = Number(process.env.EXIT_PEAK_HOURS_BEFORE ?? '0');
+
+// ==================== 峰值前逢高平仓（EXIT_PEAK_HIGH，2026-08-11 实验开关） ====================
+//
+// 规则：入场后逐时跟踪双桶 bid 之和，在"该城 D0 典型峰值时间"之前，
+//   一旦 sumBid >= 阈值（逢高）就按该时点 bid 之和平仓——不等 0.85 死等，
+//   提前落袋避免峰值前冲高回落。峰值前未触及阈值 → 回退基线（持有到结算）。
+// 用法：EXIT_PEAK_HIGH=0.75 npx tsx scripts/simulate-all-cities.ts
+//   与 EXIT_PEAK_HOURS_BEFORE/STOP_LOSS 互斥，EXIT_PEAK_HIGH 优先（用户指定"只用这一个限制"）。
+const EXIT_PEAK_HIGH = Number(process.env.EXIT_PEAK_HIGH ?? '0');
+
+// ==================== 双桶止盈目标价（EXIT_SUM，2026-08-12 参数化） ====================
+//
+// 基线退出逻辑：双桶持仓逐时跟踪 bid 之和，一旦 sumBid >= EXIT_SUM 即平仓
+// （生产 ExitStrategy INTERVAL_EXIT_SUM=0.85）。此参数化用于回测 0.85 是否最优。
+// 用法：EXIT_SUM=0.80 npx tsx scripts/simulate-all-cities.ts（默认 0.85 对齐生产）
+const EXIT_SUM = Number(process.env.EXIT_SUM ?? '0.85');
+
+// ==================== 峰值回撤止盈（EXIT_PULLBACK，2026-08-14 实验开关） ====================
+//
+// 规则（用户方案）：关闭"峰值前 0.85 提前卖"，改为追踪持仓期间双桶 bid 之和的
+//   历史最高点（前一个高点），一旦 sumBid <= 高点 × (1 - PULLBACK) 即按该时点
+//   sumBid 平仓——把"预测对了但提前割肉/拿不到 1.0"的利润尽量锁住。
+// 用法：EXIT_PULLBACK=0.05 npx tsx scripts/simulate-all-cities.ts
+// 开启后忽略 EXIT_SUM（0.85 提前卖关闭），未触发回撤时持有到结算。
+const EXIT_PULLBACK = Number(process.env.EXIT_PULLBACK ?? '0');
 
 // ==================== D0 预测失配离场（2026-08-09 实验开关） ====================
 //
@@ -240,6 +266,69 @@ const SWITCH_CAPITAL = (process.env.SWITCH_CAPITAL ?? '1') === '1';
 // 用法：MIN_PAIR_EDGE=0.10 npx tsx scripts/simulate-all-cities.ts
 //   默认 0 = 关闭（维持当前生产行为：只有 MAX_ENTRY_COST 成本上限）。
 const MIN_PAIR_EDGE = Number(process.env.MIN_PAIR_EDGE ?? '0');
+
+// ==================== Edge/价格比过滤（MIN_PAIR_EDGE_RATIO，2026-08-11 网格实验） ====================
+//
+// 规则：双桶决策后，edge/价格比 = (pPair − 买入成本) / 买入成本 < 阈值 → 不开仓。
+//   与 MIN_PAIR_EDGE（绝对 edge 阈值）正交：它过滤"贵信号"——成本高要求 edge 更高，
+//   成本低允许小 edge。体育项目回测（polymarket-zero-cost-quant）ROI +60.9% → +99.7%。
+// 用法：MIN_PAIR_EDGE_RATIO=0.12 npx tsx scripts/simulate-all-cities.ts
+//   默认 0 = 关闭（维持当前生产行为）。
+const MIN_PAIR_EDGE_RATIO = Number(process.env.MIN_PAIR_EDGE_RATIO ?? '0');
+
+// ==================== Edge 比值过滤（EDGE_DIV_MIN，2026-08-12 实验开关） ====================
+//
+// 规则：edge 定义为比值 = pPair / 买入成本（每花 1 美元买到多少概率），
+//   比值 < EDGE_DIV_MIN → 不开仓。与 5.5 绝对 edge / 5.6 减法比值互斥：
+//   EDGE_DIV_MIN > 0 时优先替代两者（用户指定"用这个测算"）。
+// 换算参考：EDGE_DIV_MIN = 1 + MIN_PAIR_EDGE_RATIO（如 1.30 ≈ 原 0.30）。
+// 用法：EDGE_DIV_MIN=1.30 npx tsx scripts/simulate-all-cities.ts
+//   默认 0 = 关闭。
+const EDGE_DIV_MIN = Number(process.env.EDGE_DIV_MIN ?? '0');
+
+// ==================== 最优单桶 edge 过滤（FILTER_BEST_SINGLE，2026-08-12 实验开关） ====================
+//
+// 规则：买入仍用最优双桶对，但过滤门槛改用"该对中最优单桶"的 edge
+//   （modelProbability − yesPrice 最大的桶），替代双桶区间 edge（pPair − 成本）。
+//   目的：第二优桶的市场价噪音（定价偏贵/偏贱）不应否决整个持仓——
+//   只要最优单桶自身有足够 edge，双桶区间覆盖仍有价值。
+// 用法：FILTER_BEST_SINGLE=1 MIN_PAIR_EDGE=0.10 npx tsx scripts/simulate-all-cities.ts
+//   （阈值复用 MIN_PAIR_EDGE；默认 0 = 关闭，维持双桶区间 edge 过滤。）
+const FILTER_BEST_SINGLE = (process.env.FILTER_BEST_SINGLE ?? '0') === '1';
+
+// ==================== 模型-市场分歧保护（FILTER_MARKET_GAP，2026-08-14） ====================
+//
+// 规则：持仓桶市场价相对模型概率严重低估（yesPrice < 模型概率 × 0.4）→ 不开仓。
+//   市场比模型更了解实时天气，模型高概率 + 市场极低价 = 预测大概率偏了
+//   （wellington 08-13 循环案例：模型 67% vs 市场 0.19，止损→重开 11 次单日 -$8.89）。
+// 用法：FILTER_MARKET_GAP=1 npx tsx scripts/simulate-all-cities.ts（阈值 MARKET_GAP_RATIO，默认 0.4）
+const FILTER_MARKET_GAP = (process.env.FILTER_MARKET_GAP ?? '0') === '1';
+const MARKET_GAP_RATIO = Number(process.env.MARKET_GAP_RATIO ?? '0.4');
+
+// ==================== 只看最近 N 天市场（SINCE_DAYS，2026-08-11） ====================
+//
+// 用法：SINCE_DAYS=7 npx tsx scripts/simulate-all-cities.ts
+//   只回测目标日期在最近 N 天内的市场（已结算的计入盈亏，未结算的空跑决策不计盈亏）。
+const SINCE_DAYS = Number(process.env.SINCE_DAYS ?? '0');
+
+// ==================== 精确起始日期（SINCE_DATE，2026-08-14） ====================
+//
+// 用法：SINCE_DATE=2026-08-04 npx tsx scripts/simulate-all-cities.ts
+//   只回测目标日期 >= 该日期的市场（字符串比较，YYYY-MM-DD）。
+//   优先级高于 SINCE_DAYS：两者都设时以 SINCE_DATE 为准。
+const SINCE_DATE = process.env.SINCE_DATE ?? '';
+
+// ==================== 强制单桶买入（SINGLE_BUCKET_ONLY，2026-08-12 实验开关） ====================
+//
+// 规则：跳过双桶选对，直接在候选桶里选"低价高赔率"单桶：
+//   候选 = 有成交量的 YES 桶，价格 <= SINGLE_MAX_PRICE（低价），
+//   edge = modelProbability − yesPrice > 0；按 edge 降序选最优桶。
+//   与 MIN_PAIR_EDGE_RATIO 配合：加 edge/价格比过滤（用户方案：
+//   "选择低价高赔率市场，虽然命中率会降低"）。
+// 用法：
+//   SINGLE_BUCKET_ONLY=1 MIN_PAIR_EDGE_RATIO=0.8 npx tsx scripts/simulate-all-cities.ts
+const SINGLE_BUCKET_ONLY = (process.env.SINGLE_BUCKET_ONLY ?? '0') === '1';
+const SINGLE_MAX_PRICE = Number(process.env.SINGLE_MAX_PRICE ?? '0.30');
 
 // ==================== D1 加仓（SWITCH_ADD，2026-08-09 实验开关） ====================
 //
@@ -594,10 +683,15 @@ interface EntryRecord {
   driftThreshold?: number;
   // 峰值前平仓（EXIT_PEAK_HOURS_BEFORE）：平仓时刻（UTC ISO）。
   peakExitTs?: string;
+  // 峰值前逢高平仓（EXIT_PEAK_HIGH）：峰值前 sumBid 触及阈值提前落袋。
+  peakHighExit?: boolean;
+  peakHighTarget?: number;
   // D0 预测失配离场（EXIT_D0_MISMATCH）：D0 最新预测不在桶内提前平仓。
   d0MismatchExit?: boolean;
   // 价格止损（STOP_LOSS_K）：双桶市场价跌破入场成本×K 提前平仓（或半仓减仓）。
   stopLossExit?: boolean;
+  // 峰值回撤止盈（EXIT_PULLBACK）：从持仓期间高点回撤 >= PULLBACK 平仓。
+  pullbackExit?: boolean;
   // D1 换仓（SWITCH_D1）：入场后 D+1 预测漂移，卖旧桶买新桶。
   switched?: boolean;
   switchKeys?: string[];
@@ -609,7 +703,12 @@ interface EntryRecord {
 }
 
 async function main(): Promise<void> {
-  // 用 shanghai 配置拿 scoringWeights / risk（全城市共用同一套选桶权重）。
+  // 加载所有城市配置（用于每个城市独立的 TradingDecisionEngine，如 dispersionPenalty 权重）。
+  const cityConfigs = new Map<string, CityConfig>();
+  for (const city of ['shanghai', 'nyc', 'london', 'paris', 'munich', 'tokyo', 'seoul', 'singapore', 'tel-aviv', 'ankara', 'lucknow', 'wellington', 'miami', 'dallas', 'chicago', 'denver', 'phoenix', 'la', 'sf', 'dc', 'seattle']) {
+    try { cityConfigs.set(city, loadAppConfig(city).city); } catch { /* 跳过配置缺失的城市 */ }
+  }
+  // 回退：用 shanghai 配置拿 scoringWeights / risk（旧行为）。
   const shanghaiConfig = loadAppConfig('shanghai').city;
 
   const cityFilter = new Set(process.argv.slice(2));
@@ -635,6 +734,17 @@ async function main(): Promise<void> {
   for (const file of files) {
     const raw = JSON.parse(fs.readFileSync(path.join(OLD_DATA_DIR, file), 'utf8')) as OldMarketFile;
 
+    // SINCE_DAYS：只看目标日期在最近 N 天内的市场（YYYY-MM-DD 可直接字符串比较）。
+    // SINCE_DATE 优先：目标日期 < 指定日期直接跳过。
+    if (SINCE_DATE) {
+      if (raw.date < SINCE_DATE) continue;
+    } else if (SINCE_DAYS > 0) {
+      const sinceDate = new Date(Date.now() - SINCE_DAYS * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      if (raw.date < sinceDate) continue;
+    }
+
     if (!raw.forecast_snapshots || raw.forecast_snapshots.length === 0) {
       skippedNoSnapshots += 1;
       continue;
@@ -651,7 +761,8 @@ async function main(): Promise<void> {
     const history = loadMarketPriceHistory(marketId);
 
     const probEngine = new AdaptiveProbabilityEngine(raw.city as CityId, raw.city, bucketsC);
-    const decisionEngine = new TradingDecisionEngine(shanghaiConfig);
+	    const cityCfg = cityConfigs.get(raw.city) ?? shanghaiConfig;
+	    const decisionEngine = new TradingDecisionEngine(cityCfg);
 
     // actual 温度转摄氏（供命中判定）。
     const actualTempC = raw.actual_temp == null ? null : fahrenheit ? toC(raw.actual_temp) : raw.actual_temp;
@@ -771,6 +882,25 @@ async function main(): Promise<void> {
         if (!sel) continue;
         bucketKeys = sel.keys;
         logger.info(`[MULTI] ${marketId} ${snap.horizon} 选 ${MULTI_BUCKET_N} 桶 ${sel.keys.join('+')} 成本=$${sel.cost.toFixed(3)} pSum=${sel.pSum.toFixed(3)} edge=${(sel.pSum - sel.cost).toFixed(3)}`);
+      } else if (SINGLE_BUCKET_ONLY) {
+        // 强制单桶：低价高赔率路径（跳过双桶选对）。
+        // 候选 = 有成交量的 YES 桶，价格 ≤ SINGLE_MAX_PRICE，edge = 模型概率 − 价格 > 0；
+        // 按 edge 降序选最优（价格由 SINGLE_MAX_PRICE 锁"低价"，ratio 由 MIN_PAIR_EDGE_RATIO 过滤）。
+        const singles = candidates.filter(
+          (c) =>
+            c.yesPrice > 0 &&
+            c.yesPrice <= SINGLE_MAX_PRICE &&
+            c.volumeUsd > 0 &&
+            c.modelProbability - c.yesPrice > 0,
+        );
+        if (singles.length === 0) continue;
+        singles.sort(
+          (a, b) => (b.modelProbability - b.yesPrice) - (a.modelProbability - a.yesPrice),
+        );
+        const best = singles[0]!;
+        bucketKeys = [best.bucket.label];
+        pairEdge = best.modelProbability - best.yesPrice;
+        logger.info(`[SINGLE] ${marketId} ${snap.horizon} 选桶 ${best.bucket.label} price=$${best.yesPrice.toFixed(3)} p=${best.modelProbability.toFixed(3)} edge=${pairEdge.toFixed(3)} ratio=${(pairEdge / best.yesPrice).toFixed(3)}`);
       } else {
         const decision = decisionEngine.decide({
           city: raw.city as CityId,
@@ -804,14 +934,88 @@ async function main(): Promise<void> {
         }
       }
 
-      // 5.5 入场 edge 直过滤：pPair − 买入成本 < MIN_PAIR_EDGE 不开仓
-      //    （模型自己都不信的高成本单，edge 为负/太薄时放弃，避免"贵单"）。
-      if (MIN_PAIR_EDGE > 0 && pairEdge !== null && pairEdge < MIN_PAIR_EDGE) {
+      // 5.54 最优单桶 edge（FILTER_BEST_SINGLE 用）：该桶对中 modelProbability − yesPrice 最大的桶。
+      //    买入仍是双桶对，但过滤只看最优单桶自身 edge，屏蔽第二优桶的市场价噪音。
+      const bestSingleEdge = (() => {
+        let m = -Infinity;
+        for (const k of bucketKeys) {
+          const c = candidates.find((x) => x.bucket.label === k);
+          if (c && c.yesPrice > 0) m = Math.max(m, c.modelProbability - c.yesPrice);
+        }
+        return m === -Infinity ? null : m;
+      })();
+
+      // 5.56 模型-市场分歧保护（FILTER_MARKET_GAP，2026-08-14）：
+      //    只看"最优单桶"（edge 最大的桶）的市场价/模型比值——辅助桶市场价低是
+      //    市场对次要桶的定价，不应连坐主桶（wellington 08-07 案例：辅助桶 11°C=0.025
+      //    触发拦截，主桶 12°C 实际命中，连坐误杀了赢单）。最优单桶被市场严重低估
+      //    （yesPrice < 模型概率 × 0.4）说明整个持仓的核心逻辑站不住 → 不开仓。
+      if (FILTER_MARKET_GAP && bucketKeys.length >= 1) {
+        let bestGap: { key: string; modelProbability: number; yesPrice: number } | null = null;
+        for (const k of bucketKeys) {
+          const c = candidates.find((x) => x.bucket.label === k);
+          if (!c || c.yesPrice <= 0) continue;
+          if (
+            bestGap === null ||
+            c.modelProbability - c.yesPrice >
+              bestGap.modelProbability - bestGap.yesPrice
+          ) {
+            bestGap = {
+              key: k,
+              modelProbability: c.modelProbability,
+              yesPrice: c.yesPrice,
+            };
+          }
+        }
+        if (bestGap && bestGap.yesPrice < bestGap.modelProbability * MARKET_GAP_RATIO) {
+          logger.info(
+            `[MARKET GAP] ${marketId} ${snap.horizon} 选桶 ${bucketKeys.join('+')} 最优单桶 ${bestGap.key}=$${bestGap.yesPrice.toFixed(3)} vs 模型${bestGap.modelProbability.toFixed(3)}×${MARKET_GAP_RATIO}，市场价相对模型概率严重低估，不开仓，继续等`,
+          );
+          skippedByEdge += 1;
+          continue;
+        }
+      }
+
+      // 5.55 Edge 比值过滤（EDGE_DIV_MIN）：edge = pPair / 买入成本 ≥ 阈值才开仓。
+      //    每花 1 美元买到多少概率。优先于 5.5 绝对 edge 与 5.6 减法比值（用户指定"用这个测算"）。
+      if (EDGE_DIV_MIN > 0 && entryPrice?.price != null && entryPrice.price > 0) {
+        const pPair2 = (pairEdge ?? 0) + entryPrice.price; // pPair = edge + 成本
+        const div = pPair2 / entryPrice.price;
+        if (div < EDGE_DIV_MIN) {
+          logger.info(
+            `[EDGE DIV] ${marketId} ${snap.horizon} 选桶 ${bucketKeys.join('+')} pPair/成本=${div.toFixed(3)} < ${EDGE_DIV_MIN}，不开仓，继续等`,
+          );
+          skippedByEdge += 1;
+          continue;
+        }
+      } else if (FILTER_BEST_SINGLE && bestSingleEdge !== null && bestSingleEdge < MIN_PAIR_EDGE) {
+        // 5.54 最优单桶 edge 过滤：最优单桶 edge < MIN_PAIR_EDGE 不开仓。
+        //    桶对中最优的那个桶都没有足够 edge，整个持仓就不值得（第二优桶不背锅）。
+        logger.info(
+          `[BEST SINGLE] ${marketId} ${snap.horizon} 选桶 ${bucketKeys.join('+')} 最优单桶edge=${bestSingleEdge.toFixed(3)} < MIN_PAIR_EDGE=${MIN_PAIR_EDGE}，不开仓，继续等`,
+        );
+        skippedByEdge += 1;
+        continue;
+      } else if (MIN_PAIR_EDGE > 0 && pairEdge !== null && pairEdge < MIN_PAIR_EDGE) {
         logger.info(
           `[EDGE] ${marketId} ${snap.horizon} 选桶 ${bucketKeys.join('+')} pPair-edge=$${pairEdge.toFixed(3)} < MIN_PAIR_EDGE=${MIN_PAIR_EDGE}，不开仓，继续等`,
         );
         skippedByEdge += 1;
         continue;
+      } else if (
+        MIN_PAIR_EDGE_RATIO > 0 &&
+        pairEdge !== null &&
+        entryPrice?.price != null &&
+        entryPrice.price > 0
+      ) {
+        const ratio = pairEdge / entryPrice.price;
+        if (ratio < MIN_PAIR_EDGE_RATIO) {
+          logger.info(
+            `[EDGE RATIO] ${marketId} ${snap.horizon} 选桶 ${bucketKeys.join('+')} edge/成本=${ratio.toFixed(3)} < ${MIN_PAIR_EDGE_RATIO}，不开仓，继续等`,
+          );
+          skippedByEdge += 1;
+          continue;
+        }
       }
       const hit = actualTempC === null ? null : bucketKeys.some((k) => bucketContainsC(bucketsC, k, actualTempC!));
 
@@ -897,12 +1101,53 @@ async function main(): Promise<void> {
           }
         }
 
-        // 退出逻辑优先级：价格止损（STOP_LOSS_K）> 峰值前平仓（EXIT_PEAK_HOURS_BEFORE）
-        // > D0 预测失配（EXIT_D0_MISMATCH）> 预测漂移离场（DRIFT_EXIT）> 基线。
+        // 退出逻辑优先级：峰值回撤模式（EXIT_PULLBACK，内部先止损再回撤，关闭 0.85）
+        // > 价格止损（STOP_LOSS_K）> 峰值前逢高（EXIT_PEAK_HIGH）
+        // > 峰值前平仓（EXIT_PEAK_HOURS_BEFORE）> D0 预测失配（EXIT_D0_MISMATCH）
+        // > 预测漂移离场（DRIFT_EXIT）> 基线。
         let exit: { price: number | null; driftExit: boolean };
         if (entry.switched) {
           exit = { price: entry.exitPrice, driftExit: false };
+        } else if (EXIT_PULLBACK > 0) {
+          // 峰值回撤模式：关闭 0.85 提前卖。
+          //   1) 先查价格止损（noSumExit=true：只做止损、不做 0.85 止盈）；
+          //   2) 止损未触发则查"从持仓高点回撤 PULLBACK"→ 平仓；
+          //   3) 都不触发 → 持有到结算。
+          let pbPrice: number | null = null;
+          if (STOP_LOSS_K > 0) {
+            const sl = findStopLossExit(
+              bucketKeys,
+              entry.entryTs,
+              entry.hit,
+              history,
+              entry.entryPrice,
+              STOP_LOSS_K,
+              STOP_LOSS_HALF,
+              true,
+            );
+            if (sl.stopLoss) {
+              pbPrice = sl.price;
+              entry.stopLossExit = true;
+            }
+          }
+          if (pbPrice === null) {
+            const pb = findPullbackExit(bucketKeys, entry.entryTs, history, EXIT_PULLBACK);
+            pbPrice = pb.price;
+            if (pb.price !== null) entry.pullbackExit = true;
+          }
+          exit = { price: pbPrice, driftExit: false };
+        } else if (EXIT_PEAK_HIGH > 0) {
+          // 峰值前逢高：只在该城 D0 典型峰值时刻之前有效。
+          const peak = peakTimeFor(raw.city);
+          const peakMs = peak ? peakExitMs(raw.date, peak, 0) : 0;
+          const hi = findPeakHighExit(bucketKeys, entry.entryTs, entry.hit, history, peakMs, EXIT_PEAK_HIGH);
+          exit = { price: hi.price, driftExit: false };
+          if (hi.price !== null) {
+            entry.peakHighExit = true;
+            entry.peakHighTarget = EXIT_PEAK_HIGH;
+          }
         } else if (STOP_LOSS_K > 0) {
+          // 价格止损：双桶市场价跌破入场成本×K 提前平仓（0.85 止盈优先）。
           const sl = findStopLossExit(
             bucketKeys,
             entry.entryTs,
@@ -911,6 +1156,7 @@ async function main(): Promise<void> {
             entry.entryPrice,
             STOP_LOSS_K,
             STOP_LOSS_HALF,
+            false,
           );
           exit = { price: sl.price, driftExit: false };
           if (sl.stopLoss) entry.stopLossExit = true;
@@ -947,8 +1193,13 @@ async function main(): Promise<void> {
           exit = { price: null, driftExit: false };
         }
         if (exit.price === null) {
-          const base = findExitPrice(bucketKeys, entry.entryTs, entry.hit, history);
-          exit.price = base.price;
+          if (EXIT_PULLBACK > 0) {
+            // 峰值回撤模式：关闭 0.85 提前卖，未触发回撤则持有到结算。
+            exit.price = entry.hit === null ? null : (entry.hit ? 1.0 : 0.0);
+          } else {
+            const base = findExitPrice(bucketKeys, entry.entryTs, entry.hit, history);
+            exit.price = base.price;
+          }
         }
         entry.exitPrice = exit.price;
         // 换仓笔的盈亏已在换仓时按"旧桶段+新桶段"算好，不能再按结算价覆盖。
@@ -1016,6 +1267,16 @@ async function main(): Promise<void> {
     });
   }
 
+  if (EXIT_PEAK_HIGH > 0) {
+    const highN = entries.filter((e) => e.peakHighExit).length;
+    const highPnl = settled.filter((e) => e.peakHighExit).reduce((s, e) => s + (e.profit ?? 0), 0);
+    logger.info('峰值前逢高平仓（EXIT_PEAK_HIGH）', {
+      逢高阈值: EXIT_PEAK_HIGH,
+      触发笔数: highN,
+      触发后盈亏合计: `$${highPnl.toFixed(3)}`,
+    });
+  }
+
   if (EXIT_D0_MISMATCH) {
     const d0N = entries.filter((e) => e.d0MismatchExit).length;
     const d0Pnl = settled.filter((e) => e.d0MismatchExit).reduce((s, e) => s + (e.profit ?? 0), 0);
@@ -1033,6 +1294,16 @@ async function main(): Promise<void> {
       半仓: STOP_LOSS_HALF,
       触发笔数: slN,
       触发后盈亏合计: `$${slPnl.toFixed(3)}`,
+    });
+  }
+
+  if (EXIT_PULLBACK > 0) {
+    const pbN = entries.filter((e) => e.pullbackExit).length;
+    const pbPnl = settled.filter((e) => e.pullbackExit).reduce((s, e) => s + (e.profit ?? 0), 0);
+    logger.info('峰值回撤止盈（EXIT_PULLBACK）', {
+      回撤阈值: EXIT_PULLBACK,
+      触发笔数: pbN,
+      触发后盈亏合计: `$${pbPnl.toFixed(3)}`,
     });
   }
 
@@ -1267,7 +1538,7 @@ function findExitPrice(
         if (t * 1000 < entryMs) continue;
         const p1 = p1At.get(t);
         const p2 = p2At.get(t);
-        if (p1 != null && p2 != null && p1 + p2 >= 0.85) {
+        if (p1 != null && p2 != null && p1 + p2 >= EXIT_SUM) {
           return { price: p1 + p2 };
         }
       }
@@ -1292,6 +1563,7 @@ function findStopLossExit(
   entryPrice: number,
   stopK: number,
   half: boolean,
+  noSumExit = false,
 ): { price: number | null; stopLoss: boolean } {
   const entryMs = entryTs ? new Date(entryTs).getTime() : 0;
 
@@ -1315,7 +1587,8 @@ function findStopLossExit(
           }
           return { price: sum, stopLoss: true };
         }
-        if (sum >= 0.85) {
+        // 0.85 止盈目标优先。峰值回撤模式（noSumExit=true）下关闭。
+        if (!noSumExit && sum >= 0.85) {
           return { price: sum, stopLoss: false }; // 原止盈目标优先
         }
       }
@@ -1324,6 +1597,87 @@ function findStopLossExit(
 
   if (hit === null) return { price: null, stopLoss: false };
   return { price: hit ? 1.0 : 0.0, stopLoss: false };
+}
+
+/**
+ * 峰值回撤止盈（EXIT_PULLBACK）：
+ * 入场后逐时遍历双桶 bid 之和，跟踪持仓期间的历史最高点（前一个高点），
+ * 一旦 sumBid <= 高点 × (1 - PULLBACK) 即按该时点 sumBid 平仓。
+ * 关闭 0.85 提前卖；未触发 → 返回 null，调用方回退持有到结算。
+ * 无 price-history → 返回 null。
+ */
+function findPullbackExit(
+  bucketKeys: string[],
+  entryTs: string | null,
+  history: PriceHistory | null,
+  pullback: number,
+): { price: number | null } {
+  const entryMs = entryTs ? new Date(entryTs).getTime() : 0;
+  if (!history) return { price: null };
+  const s1 = history.get(bucketKeys[0]!);
+  const s2 = bucketKeys.length >= 2 ? history.get(bucketKeys[1]!) : null;
+  if (!s1 || s1.length === 0 || (bucketKeys.length >= 2 && (!s2 || s2.length === 0))) {
+    return { price: null };
+  }
+  const p1At = new Map(s1.map((p) => [p.t, p.p]));
+  const p2At = s2 ? new Map(s2.map((p) => [p.t, p.p])) : null;
+  const times = [...new Set<number>([...s1, ...(s2 ?? [])].map((p) => p.t))].sort((a, b) => a - b);
+  let peak = 0;
+  for (const t of times) {
+    if (t * 1000 < entryMs) continue;
+    const p1 = p1At.get(t);
+    const p2 = p2At ? p2At.get(t) : null;
+    if (p1 == null || (bucketKeys.length >= 2 && p2 == null)) continue;
+    const sum = p1 + (p2 ?? 0);
+    if (sum > peak) {
+      peak = sum; // 更新前一个高点
+    } else if (peak > 0 && sum <= peak * (1 - pullback)) {
+      return { price: sum }; // 从高点回撤 >= PULLBACK → 平仓
+    }
+  }
+  return { price: null };
+}
+
+/**
+ * 峰值前逢高平仓（EXIT_PEAK_HIGH）：
+ * 入场后逐时遍历 price-history，仅在该城 D0 典型峰值时刻（peakMs）之前，
+ * 一旦双桶 bid 之和 >= highTarget 就按该时点 bid 之和平仓（提前落袋）。
+ * 峰值前未触及阈值 → 返回 null，调用方回退基线（持有到结算）。
+ * 无 price-history 或城市无峰值配置 → 同样回退。
+ */
+function findPeakHighExit(
+  bucketKeys: string[],
+  entryTs: string | null,
+  hit: boolean | null,
+  history: PriceHistory | null,
+  peakMs: number,
+  highTarget: number,
+): { price: number | null } {
+  const entryMs = entryTs ? new Date(entryTs).getTime() : 0;
+
+  if (history && peakMs > 0) {
+    const s1 = history.get(bucketKeys[0]!);
+    const s2 = bucketKeys.length >= 2 ? history.get(bucketKeys[1]!) : null;
+    if (s1 && s1.length > 0 && (bucketKeys.length === 1 || (s2 && s2.length > 0))) {
+      const p1At = new Map(s1.map((p) => [p.t, p.p]));
+      const p2At = s2 ? new Map(s2.map((p) => [p.t, p.p])) : null;
+      const times = [...new Set<number>([...s1, ...(s2 ?? [])].map((p) => p.t))].sort((a, b) => a - b);
+      for (const t of times) {
+        const tsMs = t * 1000;
+        if (tsMs < entryMs) continue;
+        if (tsMs > peakMs) break; // 峰值后不再"逢高"（阶段二之外）
+        const p1 = p1At.get(t);
+        const p2 = p2At ? p2At.get(t) : null;
+        if (p1 == null || (bucketKeys.length >= 2 && p2 == null)) continue;
+        const sum = p1 + (p2 ?? 0);
+        if (sum >= highTarget) {
+          return { price: sum };
+        }
+      }
+    }
+  }
+
+  return { price: null };
 }
 
 /**

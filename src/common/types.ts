@@ -96,6 +96,31 @@ export interface StandardizedForecast {
   metadata: Record<string, unknown>;
 }
 
+/**
+ * 集合预报（ensemble）逐日最高温。
+ * 来自 Open-Meteo ensemble API（独立端点 /v1/ensemble），每个模型一组扰动成员：
+ *   - dayTemps[i][d] = 第 i 个成员第 d 天（0 起）的日最高温（℃）
+ *   - mean[d]       = 当天所有成员的平均（ensemble mean）
+ * 用成员分布直接算桶概率（KDE 核密度），比"单点预报 + 高斯拟合"更贴近真实不确定性，
+ * 尾部概率（极端桶）尤其准。
+ */
+export interface EnsembleDailyForecast {
+  // 数据源 ID，例如 open-meteo-ensemble。
+  sourceId: string;
+  // 底层模型名，例如 ecmwf_ifs025 / gfs025 / icon_seamless。
+  model: string;
+  // 目标结算站点，例如 ZSPD。
+  targetStation: string;
+  // 预报发布（拉取）时间。
+  issuanceTime: Date;
+  // 有效成员数（可能因个别成员缺数而少于模型总成员）。
+  memberCount: number;
+  // 每个成员每天的最高温（℃）。dayTemps[i][d]。
+  dayTemps: number[][];
+  // ensemble mean：每天最高温（℃）。
+  mean: number[];
+}
+
 export interface CityBiasProfile {
   // 城市 ID。偏差库必须按城市隔离。
   city: CityId;
@@ -220,6 +245,19 @@ export interface ProbabilityDistribution {
     status: DataSourceStatus;
   }>;
 
+  // 集合预报（ensemble）接入信息（仅启用时存在），用于复盘与对照。
+  // 存 ensemble 单独产出的桶概率分布 + 元数据，方便日后对比"纯高斯"与"集合分布"的优劣。
+  ensemble?: {
+    model: string;
+    memberCount: number;
+    // ensemble mean 当天的最高温（℃，已应用偏差平移）。
+    meanTempC: number;
+    // 成员离散度（成员最高温的标准差，℃）。
+    dispersionC: number;
+    // ensemble 单独产出的桶概率（未与高斯融合，供对照）。
+    probabilities: BucketProbability[];
+  };
+
   generatedAt: Date;
 }
 
@@ -248,6 +286,23 @@ export interface TradingSignalScore {
   dispersionPenalty: number;
 }
 
+/**
+ * Maker 优先入场信息：D2 对便宜桶挂限价单，等 D1 回撤成交，没成交就 Taker 兜底。
+ * 回测验证：+15.6% 总盈亏提升（63/69 笔 Maker 成交，均价便宜 4%）。
+ */
+export interface MakerFirstInfo {
+  // 便宜的桶 → 做 Maker，挂限价单等成交。
+  makerBucket: TemperatureBucket;
+  // 贵的桶 → 做 Taker，在 Maker 成交时间点市价买。
+  takerBucket: TemperatureBucket;
+  // Maker 限价单价格（D2 开盘价，< 0.30 才挂单）。
+  makerLimitPrice: number;
+  // 是否满足 Maker 条件（D2 价格 < 0.30）。
+  makerQualified: boolean;
+  // D2 立即进场总价（供参考对比）。
+  entryPriceD2: number;
+}
+
 export interface TradingDecision {
   city: CityId;
   horizon: ForecastHorizon;
@@ -263,13 +318,20 @@ export interface TradingDecision {
   // 计划买入价格（双桶时为两桶价格之和）。
   entryPrice: number;
 
-  // 计划投入金额，单位美元。
+  // 计划投入金额，单位美元（凯利动态计算，受 maxPositionUsd 单笔上限约束）。
   sizeUsd: number;
+
+  // 凯利全比例（f*，0-1）：每笔按"资金池 × f* × 凯利系数"动态投入。
+  // 仅用于日志/复盘，实际下单用 sizeUsd。
+  kellyFraction: number;
 
   // paper 表示只记录模拟交易，live 才会真实下单。
   mode: TradingMode;
 
   score: TradingSignalScore;
+
+  // Maker 优先入场信息（D2 时有效，D1/D0 无此信息）。
+  makerFirst?: MakerFirstInfo;
 
   // 用自然语言记录为什么买，便于小白复盘策略行为。
   reason: string;
@@ -346,6 +408,12 @@ export interface TradeRecord {
   // bucketBounds[i] 对应 buckets[i]；switchBucketBounds[i] 对应 switchKeys[i]。
   bucketBounds?: Array<{ minTempC: number | null; maxTempC: number | null }>;
   switchBucketBounds?: Array<{ minTempC: number | null; maxTempC: number | null }>;
+  // ===== 补结算标记（2026-08-12） =====
+  // true = 该笔由补结算机制（settleDuePositions）补记，非持仓监控正常结算。
+  // 覆盖两类：重启后失联的持仓、平仓后被移出内存的持仓。
+  // 这类记录的 pnl/exitPrice 是补结算时刻的市场快照（可能非真实执行价），
+  // 统计报告应与正常平仓/结算分开看，避免污染胜率和盈亏口径。
+  viaSettleBackfill?: boolean;
 }
 
 export interface ExitPlan {

@@ -60,12 +60,45 @@ interface ResidualEntry {
 export class DebCalibration {
   private biasTable: Record<string, BiasEntry> = {};
   private residualStats: Record<string, ResidualEntry> = {};
+  private dataDir = '';
+  // 已加载文件的 mtime（ms），用于检测偏差表更新并自动重载（不重启进程）。
+  private biasMtimeMs = -1;
+  private residualMtimeMs = -1;
 
   constructor(projectRoot: string) {
-    const oldDataDir =
+    this.dataDir =
       process.env.OLD_PROJECT_DATA_DIR ??
       path.resolve(projectRoot, '..', '..', 'weather-bot', 'polymarket-weather-bot', 'data');
-    this.load(oldDataDir);
+    this.load(this.dataDir);
+  }
+
+  /**
+   * 检查 bias.json / residual_stats.json 的 mtime 是否变化。
+   * 任一文件更新则重新加载校准表（每轮采集时调用，无需重启进程）。
+   * 返回 true 表示本轮发生了重载。
+   */
+  reloadIfChanged(): boolean {
+    const biasPath = path.join(this.dataDir, 'bias.json');
+    const residualPath = path.join(this.dataDir, 'residual_stats.json');
+    let changed = false;
+    try {
+      if (fs.existsSync(biasPath) && fs.statSync(biasPath).mtimeMs !== this.biasMtimeMs) {
+        changed = true;
+      }
+    } catch {
+      // stat 失败（文件被占用等）不触发重载，沿用当前表。
+    }
+    try {
+      if (fs.existsSync(residualPath) && fs.statSync(residualPath).mtimeMs !== this.residualMtimeMs) {
+        changed = true;
+      }
+    } catch {
+      // 同上。
+    }
+    if (changed) {
+      this.load(this.dataDir);
+    }
+    return changed;
   }
 
   private load(oldDataDir: string): void {
@@ -75,6 +108,7 @@ export class DebCalibration {
     try {
       if (fs.existsSync(biasPath)) {
         this.biasTable = JSON.parse(fs.readFileSync(biasPath, 'utf8')) as Record<string, BiasEntry>;
+        this.biasMtimeMs = fs.statSync(biasPath).mtimeMs;
         logger.info('加载温度档 bias 表', { keyCount: Object.keys(this.biasTable).length });
       }
     } catch (error) {
@@ -89,6 +123,7 @@ export class DebCalibration {
           sigma?: Record<string, ResidualEntry>;
         };
         this.residualStats = raw.sigma ?? {};
+        this.residualMtimeMs = fs.statSync(residualPath).mtimeMs;
         logger.info('加载残差统计表（MAE）', { keyCount: Object.keys(this.residualStats).length });
       }
     } catch (error) {

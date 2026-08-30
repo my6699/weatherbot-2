@@ -16,11 +16,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
-import { fetch, ProxyAgent, type Dispatcher } from 'undici';
+
+// 代理支持改为可选（2026-08-14）：
+//   undici 8.x 要求 Node >= 22.22，VPS 上 Node 20 加载 undici 会直接崩
+//   （webidl.util.markAsUncloneable is not a function）。本地 Windows 需要
+//   ProxyAgent 走系统代理，VPS（欧洲）不需要代理。
+//   方案：有代理环境变量时动态 import undici 构造 ProxyAgent；否则回退
+//   Node 内置 fetch（Node 20+ 全局 fetch 内嵌 undici，版本与 Node 匹配）。
+type Dispatcher = { [key: string]: unknown };
 
 const OLD_DATA_DIR = path.resolve(
-  process.cwd(),
-  '..', '..', 'weather-bot', 'polymarket-weather-bot', 'data', 'markets',
+  process.env.OLD_DATA_DIR ??
+    path.resolve(process.cwd(), '..', '..', 'weather-bot', 'polymarket-weather-bot', 'data', 'markets'),
 );
 const OUT_DIR = path.resolve(process.cwd(), 'data', 'price-history');
 
@@ -62,11 +69,13 @@ function detectProxy(): string | null {
 
 let proxyAgent: Dispatcher | null = null;
 
-function getDispatcher(): Dispatcher | undefined {
+async function getDispatcher(): Promise<Dispatcher | undefined> {
   if (proxyAgent) return proxyAgent;
   const proxy = detectProxy();
   if (!proxy) return undefined;
   try {
+    // 动态 import：Node <22 加载 undici 会崩，仅在需要代理时尝试（本地 Windows）。
+    const { ProxyAgent } = (await import('undici')) as { ProxyAgent: new (p: string) => Dispatcher };
     proxyAgent = new ProxyAgent(proxy);
     return proxyAgent;
   } catch {
@@ -77,10 +86,11 @@ function getDispatcher(): Dispatcher | undefined {
 // ==================== HTTP 请求 ====================
 
 async function fetchJson<T>(url: string, retries = 3): Promise<T | null> {
+  const dispatcher = await getDispatcher();
   for (let i = 0; i <= retries; i++) {
     try {
       const res = await fetch(url, {
-        dispatcher: getDispatcher(),
+        ...(dispatcher ? { dispatcher } : {}),
         headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', Accept: 'application/json' },
       });
       if (!res.ok) {
@@ -150,14 +160,17 @@ async function getPriceHistory(token: string): Promise<Array<{ t: number; p: num
 // ==================== 主逻辑 ====================
 
 async function main(): Promise<void> {
+  // 默认遍历全部城市；可传城市过滤。SKIP_EXISTING=1 跳过已抓取文件（增量补抓）。
   const cityFilter = new Set(process.argv.slice(2));
-  if (cityFilter.size === 0) cityFilter.add('shanghai');
+  const SKIP_EXISTING = (process.env.SKIP_EXISTING ?? '0') === '1';
+  // 只抓目标日期 >= SINCE_DATE 的市场（增量补抓 08-07 以后）。
+  const sinceDate = process.env.SINCE_DATE ?? '';
 
   fs.mkdirSync(OUT_DIR, { recursive: true });
 
   const files = fs
     .readdirSync(OLD_DATA_DIR)
-    .filter((f) => f.endsWith('.json') && cityFilter.has(f.split('_')[0] ?? ''));
+    .filter((f) => f.endsWith('.json') && (cityFilter.size === 0 || cityFilter.has(f.split('_')[0] ?? '')));
   files.sort();
 
   let okCount = 0;
@@ -174,8 +187,17 @@ async function main(): Promise<void> {
       skipCount += 1;
       continue;
     }
+    if (sinceDate && raw.date < sinceDate) {
+      skipCount += 1;
+      continue;
+    }
 
     const fileLabel = `${raw.city}_${raw.date}`;
+    const outFile = path.join(OUT_DIR, `${raw.city}_${raw.date}.json`);
+    if (SKIP_EXISTING && fs.existsSync(outFile)) {
+      skipCount += 1;
+      continue;
+    }
     const buckets: Record<string, Array<{ t: number; p: number }>> = {};
 
     for (const outcome of raw.all_outcomes) {
@@ -205,7 +227,6 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const outFile = path.join(OUT_DIR, `${raw.city}_${raw.date}.json`);
     fs.writeFileSync(
       outFile,
       JSON.stringify({ city: raw.city, date: raw.date, buckets }, null, 2),

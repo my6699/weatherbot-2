@@ -1,0 +1,598 @@
+{
+  "version": 1,
+  "updatedAt": "2026-08-18T06:52:45.214Z",
+  "cities": {
+    "shanghai": {
+      "city": "shanghai",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.211Z"
+    },
+    "nyc": {
+      "city": "nyc",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.211Z"
+    },
+    "chicago": {
+      "city": "chicago",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.211Z"
+    },
+    "miami": {
+      "city": "miami",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 1,
+        "tradeCount30d": 1,
+        "pnl30d": 3.7,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 1,
+        "tradeCount14d": 1,
+        "pnl14d": 3.7
+      },
+      "lastUpdated": "2026-08-18T06:52:45.212Z"
+    },
+    "dallas": {
+      "city": "dallas",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 1,
+        "pnl30d": -3.2,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 1,
+        "pnl14d": -3.2
+      },
+      "lastUpdated": "2026-08-18T06:52:45.212Z"
+    },
+    "seattle": {
+      "city": "seattle",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": 8.399999999999999,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": 8.399999999999999
+      },
+      "lastUpdated": "2026-08-18T06:52:45.212Z"
+    },
+    "atlanta": {
+      "city": "atlanta",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.5,
+        "tradeCount30d": 4,
+        "pnl30d": 6.7,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.5,
+        "tradeCount14d": 4,
+        "pnl14d": 6.7
+      },
+      "lastUpdated": "2026-08-18T06:52:45.212Z"
+    },
+    "london": {
+      "city": "london",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "paris": {
+      "city": "paris",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "munich": {
+      "city": "munich",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "ankara": {
+      "city": "ankara",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": 8.1,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": 8.1
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "seoul": {
+      "city": "seoul",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 3,
+        "pnl30d": -5.57,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 3,
+        "pnl14d": -5.57
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "tokyo": {
+      "city": "tokyo",
+      "status": "blacklisted",
+      "blacklistedAt": "2026-08-18",
+      "whitelistedAt": null,
+      "reason": "手动强制禁用（.env DISABLED_CITIES）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 4,
+        "pnl30d": -8.58,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 4,
+        "pnl14d": -8.58
+      },
+      "lastUpdated": "2026-08-18T06:52:45.213Z"
+    },
+    "singapore": {
+      "city": "singapore",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "lucknow": {
+      "city": "lucknow",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "tel-aviv": {
+      "city": "tel-aviv",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.5,
+        "tradeCount30d": 2,
+        "pnl30d": 3.01,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.5,
+        "tradeCount14d": 2,
+        "pnl14d": 3.01
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "toronto": {
+      "city": "toronto",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "sao-paulo": {
+      "city": "sao-paulo",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.25,
+        "tradeCount30d": 4,
+        "pnl30d": -25.720000000000006,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.25,
+        "tradeCount14d": 4,
+        "pnl14d": -25.720000000000006
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "buenos-aires": {
+      "city": "buenos-aires",
+      "status": "insufficient_data",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足（尚无预报或交易记录）",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": null,
+        "tradeCount30d": 0,
+        "pnl30d": null,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": null,
+        "tradeCount14d": 0,
+        "pnl14d": null
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    },
+    "wellington": {
+      "city": "wellington",
+      "status": "active",
+      "blacklistedAt": null,
+      "whitelistedAt": null,
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": -3.0900000000000003,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": -3.0900000000000003
+      },
+      "lastUpdated": "2026-08-18T06:52:45.214Z"
+    }
+  },
+  "changes": [
+    {
+      "city": "miami",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 1,
+        "tradeCount30d": 1,
+        "pnl30d": 3.7,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 1,
+        "tradeCount14d": 1,
+        "pnl14d": 3.7
+      },
+      "detectedAt": "2026-08-18T06:52:45.212Z"
+    },
+    {
+      "city": "dallas",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 1,
+        "pnl30d": -3.2,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 1,
+        "pnl14d": -3.2
+      },
+      "detectedAt": "2026-08-18T06:52:45.212Z"
+    },
+    {
+      "city": "seattle",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": 8.399999999999999,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": 8.399999999999999
+      },
+      "detectedAt": "2026-08-18T06:52:45.212Z"
+    },
+    {
+      "city": "atlanta",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.5,
+        "tradeCount30d": 4,
+        "pnl30d": 6.7,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.5,
+        "tradeCount14d": 4,
+        "pnl14d": 6.7
+      },
+      "detectedAt": "2026-08-18T06:52:45.212Z"
+    },
+    {
+      "city": "ankara",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": 8.1,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": 8.1
+      },
+      "detectedAt": "2026-08-18T06:52:45.213Z"
+    },
+    {
+      "city": "seoul",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 3,
+        "pnl30d": -5.57,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 3,
+        "pnl14d": -5.57
+      },
+      "detectedAt": "2026-08-18T06:52:45.213Z"
+    },
+    {
+      "city": "tokyo",
+      "from": "insufficient_data",
+      "to": "blacklisted",
+      "reason": "手动强制禁用",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0,
+        "tradeCount30d": 4,
+        "pnl30d": -8.58,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0,
+        "tradeCount14d": 4,
+        "pnl14d": -8.58
+      },
+      "detectedAt": "2026-08-18T06:52:45.213Z"
+    },
+    {
+      "city": "tel-aviv",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.5,
+        "tradeCount30d": 2,
+        "pnl30d": 3.01,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.5,
+        "tradeCount14d": 2,
+        "pnl14d": 3.01
+      },
+      "detectedAt": "2026-08-18T06:52:45.214Z"
+    },
+    {
+      "city": "sao-paulo",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.25,
+        "tradeCount30d": 4,
+        "pnl30d": -25.720000000000006,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.25,
+        "tradeCount14d": 4,
+        "pnl14d": -25.720000000000006
+      },
+      "detectedAt": "2026-08-18T06:52:45.214Z"
+    },
+    {
+      "city": "wellington",
+      "from": "insufficient_data",
+      "to": "active",
+      "reason": "数据不足",
+      "metrics": {
+        "intervalHitRate30d": null,
+        "predictionCount30d": 0,
+        "tradeHitRate30d": 0.6666666666666666,
+        "tradeCount30d": 3,
+        "pnl30d": -3.0900000000000003,
+        "intervalHitRate14d": null,
+        "predictionCount14d": 0,
+        "tradeHitRate14d": 0.6666666666666666,
+        "tradeCount14d": 3,
+        "pnl14d": -3.0900000000000003
+      },
+      "detectedAt": "2026-08-18T06:52:45.214Z"
+    }
+  ]
+}

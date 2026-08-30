@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taker vs Maker 盈亏平衡点分析</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  
+  h1 { font-size: 28px; margin-bottom: 8px; }
+  .subtitle { color: var(--text-muted); margin-bottom: 32px; font-size: 14px; }
+  
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+  .card h2 { font-size: 18px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+  
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; margin-right: 4px; }
+  .tag-taker { background: rgba(59,130,246,0.2); color: var(--blue); }
+  .tag-maker { background: rgba(139,92,246,0.2); color: var(--purple); }
+  .tag-green { background: rgba(34,197,94,0.2); color: var(--green); }
+  .tag-red { background: rgba(239,68,68,0.2); color: var(--red); }
+  .tag-amber { background: rgba(245,158,11,0.2); color: var(--amber); }
+  
+  /* 参数表 */
+  .param-table { width: 100%; border-collapse: collapse; }
+  .param-table th, .param-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+  .param-table th { color: var(--text-muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .param-table td:last-child { text-align: right; }
+  .param-table tr:last-child td { border-bottom: none; }
+  .highlight { color: var(--amber); font-weight: 600; }
+  .positive { color: var(--green); font-weight: 600; }
+  .negative { color: var(--red); font-weight: 600; }
+  
+  /* 公式框 */
+  .formula-box { background: rgba(0,0,0,0.3); border-radius: 8px; padding: 16px; margin: 12px 0; font-family: 'Courier New', monospace; font-size: 14px; line-height: 1.8; }
+  .formula-box .comment { color: var(--text-muted); font-style: italic; }
+  
+  /* 图表占位 */
+  .chart-container { width: 100%; overflow-x: auto; }
+  .bar-chart { display: flex; align-items: flex-end; gap: 8px; height: 200px; padding: 0 8px; }
+  .bar-group { display: flex; flex-direction: column; align-items: center; flex: 1; }
+  .bar { width: 100%; border-radius: 4px 4px 0 0; min-height: 4px; position: relative; transition: height 0.3s; }
+  .bar-label { font-size: 11px; color: var(--text-muted); margin-top: 6px; text-align: center; }
+  .bar-value { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  
+  /* 盈亏平衡图 */
+  .breakeven-chart { position: relative; padding: 20px 0; }
+  .be-line { display: flex; align-items: center; margin: 16px 0; position: relative; }
+  .be-label { width: 140px; font-size: 13px; flex-shrink: 0; }
+  .be-track { flex: 1; height: 32px; background: var(--bg); border-radius: 6px; position: relative; overflow: hidden; }
+  .be-fill { height: 100%; border-radius: 6px; position: absolute; top: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; transition: width 0.5s; }
+  .be-marker { position: absolute; top: -8px; width: 2px; height: 48px; background: var(--amber); z-index: 2; }
+  .be-marker-label { position: absolute; top: -24px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--amber); white-space: nowrap; }
+  
+  .scale { display: flex; justify-content: space-between; padding: 4px 0 0 140px; font-size: 10px; color: var(--text-muted); }
+  
+  /* 决策矩阵 */
+  .matrix { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .matrix-cell { padding: 16px; border-radius: 8px; border: 1px solid var(--border); }
+  .matrix-cell h4 { font-size: 14px; margin-bottom: 8px; }
+  .matrix-cell p { font-size: 13px; color: var(--text-muted); }
+  .matrix-rec { background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.3); }
+  .matrix-caution { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); }
+  .matrix-danger { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+  
+  .summary-box { background: linear-gradient(135deg, rgba(59,130,246,0.1), rgba(139,92,246,0.1)); border: 1px solid rgba(99,102,241,0.3); border-radius: 12px; padding: 20px; margin-top: 16px; }
+  .summary-box h3 { font-size: 16px; margin-bottom: 12px; color: var(--blue); }
+  .summary-box ul { padding-left: 20px; }
+  .summary-box li { margin-bottom: 8px; font-size: 14px; }
+  
+  .section-title { font-size: 20px; margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>📊 Taker vs Maker 盈亏平衡点对比分析</h1>
+<p class="subtitle">基于回测数据、jjavi 链上数据、天气市场微观结构</p>
+
+<!-- 一、核心参数对比 -->
+<div class="card">
+  <h2>一、当前两种策略的核心参数</h2>
+  <table class="param-table">
+    <thead>
+      <tr>
+        <th>参数</th>
+        <th><span class="tag tag-taker">Taker（我们的 bot）</span></th>
+        <th><span class="tag tag-maker">Maker（jjavi）</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>进场时间</td>
+        <td>D3/D2（提前 2-3 天）</td>
+        <td>D0（结算当天）</td>
+      </tr>
+      <tr>
+        <td>选桶方式</td>
+        <td>双桶区间（相邻两桶）</td>
+        <td>单桶 < 20¢（极度便宜）</td>
+      </tr>
+      <tr>
+        <td>平均入场成本</td>
+        <td><span class="highlight">~30¢/桶，双桶合计 ~55-65¢</span></td>
+        <td><span class="highlight">~5-15¢/桶</span></td>
+      </tr>
+      <tr>
+        <td>胜率</td>
+        <td><span class="positive">~65%（双桶任意一桶赢）</span></td>
+        <td><span class="highlight">~6.88%（< 20¢ 区间）</span></td>
+      </tr>
+      <tr>
+        <td>单笔利润（赢时）</td>
+        <td>~35-45¢（每桶 $1 - 成本）</td>
+        <td>~85-95¢（每桶 $1 - 5¢ 成本）</td>
+      </tr>
+      <tr>
+        <td>单笔亏损（输时）</td>
+        <td>~55-65¢（双桶全部归零）</td>
+        <td>~5-15¢（单桶归零）</td>
+      </tr>
+      <tr>
+        <td>滑点/价差</td>
+        <td><span class="negative">Taker 滑点 ~2-5%</span></td>
+        <td><span class="positive">Maker 赚价差，滑点为 0</span></td>
+      </tr>
+      <tr>
+        <td>成交率</td>
+        <td><span class="positive">~100%（主动吃单必成交）</span></td>
+        <td><span class="negative">~10-30%（挂单不一定被吃）</span></td>
+      </tr>
+      <tr>
+        <td>资金效率</td>
+        <td><span class="positive">高（每笔资金都用了）</span></td>
+        <td><span class="negative">低（资金被锁在订单簿）</span></td>
+      </tr>
+      <tr>
+        <td>单笔期望值（EV）</td>
+        <td><span class="positive">+$0.05 ~ +$0.15/桶</span></td>
+        <td><span class="positive">+$0.01 ~ +$0.03/桶（成交后）</span></td>
+      </tr>
+      <tr>
+        <td>日均交易笔数</td>
+        <td>2-5 笔</td>
+        <td>300+ 笔</td>
+      </tr>
+      <tr>
+        <td>利润因子</td>
+        <td>~2.5（回测）</td>
+        <td>6.45（jjavi 数据）</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 二、盈亏平衡公式 -->
+<div class="card">
+  <h2>二、盈亏平衡公式推导</h2>
+
+  <h3 style="margin: 16px 0 8px; font-size: 15px; color: var(--blue);">Taker 盈亏平衡</h3>
+  <div class="formula-box">
+    <span class="comment">// Taker 策略：主动吃单，必成交，但付滑点</span><br>
+    EV = 胜率 × 赢时利润 - 输率 × 输时亏损<br><br>
+    <span class="comment">// 双桶区间：成本 C1 + C2，任意一桶赢就获 $1</span><br>
+    EV = P(赢) × ($1 - C1 - C2) - P(输) × (C1 + C2)<br>
+    EV = P(赢) - (C1 + C2)<br><br>
+    <span class="comment">// 盈亏平衡条件：P(赢) = C1 + C2</span><br>
+    <span class="highlight">门槛 edge = 模型概率 - 市场价 - 滑点 > 0</span><br>
+    <span class="comment">// 实际门槛：edge > 3%（代码中 scoring 设的阈值）</span>
+  </div>
+
+  <h3 style="margin: 24px 0 8px; font-size: 15px; color: var(--purple);">Maker 盈亏平衡</h3>
+  <div class="formula-box">
+    <span class="comment">// Maker 策略：挂限价单，不一定成交，但无滑点成本</span><br>
+    <span class="comment">// 分两个阶段计算：</span><br><br>
+    <span class="comment">// 阶段一：单笔成交后的 EV（挂单后成交了）</span><br>
+    EV_成交 = 胜率 × ($1 - 入场价) - 输率 × 入场价<br>
+    EV_成交 = 胜率 - 入场价<br><br>
+    <span class="comment">// 盈亏平衡：胜率 > 入场价</span><br>
+    <span class="highlight">门槛：模型概率 > 挂单价</span><br><br>
+    <span class="comment">// 阶段二：考虑成交率的真实 EV</span><br>
+    EV_真实 = 成交率 × EV_成交 - (1 - 成交率) × 0<br>
+    <span class="comment">// 未成交的订单不亏钱（只是锁定资金）</span><br>
+    <span class="highlight">资金效率 = 成交率 × 单笔 ROI × 资金周转次数</span>
+  </div>
+
+  <h3 style="margin: 24px 0 8px; font-size: 15px; color: var(--amber);">关键差异：两个平衡点不一样</h3>
+  <div class="formula-box">
+    <span class="comment">// Taker 平衡的是"胜率 vs 成本"</span><br>
+    Taker: 需要 P(赢) > 入场价 + 滑点<br><br>
+    <span class="comment">// Maker 平衡的是"胜率 vs 挂单价"</span><br>
+    Maker: 需要 P(赢) > 挂单价<br><br>
+    <span class="comment">// 看似 Maker 门槛更低（没滑点），但实际约束更强：</span><br>
+    <span class="highlight">Maker 的入场价（5-15¢）远低于 Taker（30¢/桶）</span><br>
+    <span class="comment">// 这意味着：</span><br>
+    <span class="comment">// Taker 需要 65% 胜率才能覆盖 60¢ 成本</span><br>
+    <span class="comment">// Maker 只需要 6.88% 胜率就能覆盖 5¢ 成本</span><br>
+    <span class="comment">// 但低胜率意味着结果高度离散，需要大样本才能稳定</span>
+  </div>
+</div>
+
+<!-- 三、盈亏平衡可视化 -->
+<div class="card">
+  <h2>三、盈亏平衡点可视化</h2>
+  <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">横轴为入场价/成本，纵轴为所需胜率。曲线以下是亏损区，以上是盈利区。</p>
+
+  <div class="grid-2" style="margin-bottom: 16px;">
+    <div>
+      <h3 style="font-size: 14px; margin-bottom: 12px;"><span class="tag tag-taker">Taker 双桶策略</span></h3>
+      <div class="breakeven-chart">
+        <div class="be-line">
+          <div class="be-label">双桶成本 0.65</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 65%; background: linear-gradient(90deg, var(--red), var(--amber));"></div>
+            <div class="be-marker" style="left: 65%;"><div class="be-marker-label">65%</div></div>
+          </div>
+        </div>
+        <div class="be-line">
+          <div class="be-label">回测胜率 65.6%</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 65.6%; background: linear-gradient(90deg, var(--amber), var(--green));"></div>
+            <div class="be-marker" style="left: 65.6%;"><div class="be-marker-label">65.6%</div></div>
+          </div>
+        </div>
+        <div class="be-line">
+          <div class="be-label">双桶成本 0.55</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 55%; background: linear-gradient(90deg, var(--red), var(--green));"></div>
+            <div class="be-marker" style="left: 55%;"><div class="be-marker-label">55%</div></div>
+          </div>
+        </div>
+        <div class="scale">
+          <span>0%</span><span>50%</span><span>100%</span>
+        </div>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 12px; text-align: center;">
+          Taker 盈亏平衡线 = 双桶成本<br>
+          <span class="positive">成本 65¢ → 需胜率 > 65%</span><br>
+          <span class="positive">成本 55¢ → 需胜率 > 55%</span>
+        </p>
+      </div>
+    </div>
+    <div>
+      <h3 style="font-size: 14px; margin-bottom: 12px;"><span class="tag tag-maker">Maker 单桶策略</span></h3>
+      <div class="breakeven-chart">
+        <div class="be-line">
+          <div class="be-label">入场价 5¢</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 5%; background: linear-gradient(90deg, var(--green), var(--green));"></div>
+            <div class="be-marker" style="left: 5%;"><div class="be-marker-label">5%</div></div>
+          </div>
+        </div>
+        <div class="be-line">
+          <div class="be-label">jjavi 胜率 6.88%</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 6.88%; background: linear-gradient(90deg, var(--green), var(--green));"></div>
+            <div class="be-marker" style="left: 6.88%;"><div class="be-marker-label">6.88%</div></div>
+          </div>
+        </div>
+        <div class="be-line">
+          <div class="be-label">入场价 15¢</div>
+          <div class="be-track">
+            <div class="be-fill" style="width: 15%; background: linear-gradient(90deg, var(--red), var(--amber));"></div>
+            <div class="be-marker" style="left: 15%;"><div class="be-marker-label">15%</div></div>
+          </div>
+        </div>
+        <div class="scale">
+          <span>0%</span><span>15%</span><span>30%</span>
+        </div>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 12px; text-align: center;">
+          Maker 盈亏平衡线 = 入场价<br>
+          <span class="positive">入场 5¢ → 只需胜率 > 5%</span><br>
+          <span class="negative">入场 15¢ → 需要胜率 > 15%</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 四、关键风险点对比 -->
+<div class="card">
+  <h2>四、隐藏的"冰山"—— 两种策略真正的风险点</h2>
+
+  <div class="grid-2">
+    <div>
+      <h3 style="font-size: 15px; margin-bottom: 12px; color: var(--blue);">Taker 的隐藏风险</h3>
+      <table class="param-table">
+        <tr><td>滑点成本</td><td class="negative">~2-5% 每笔，累计吃掉利润</td></tr>
+        <tr><td>流动性不足</td><td class="negative">D3/D2 市场薄，大单会拉高成本</td></tr>
+        <tr><td>首日价格混乱</td><td class="negative">刚开市时价格波动大，容易买贵</td></tr>
+        <tr><td>资金利用率</td><td class="positive">高（但 bankroll 小，限制规模）</td></tr>
+        <tr><td>最大回撤</td><td class="negative">单笔亏损可达 65%（双桶全输）</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3 style="font-size: 15px; margin-bottom: 12px; color: var(--purple);">Maker 的隐藏风险</h3>
+      <table class="param-table">
+        <tr><td>逆向选择</td><td class="negative">你被成交的订单往往是"别人不想持有的"</td></tr>
+        <tr><td>被扫单</td><td class="negative">预报更新后没及时撤单，被人捡尸</td></tr>
+        <tr><td>资金锁定</td><td class="negative">70-90% 的挂单不成交，资金空转</td></tr>
+        <tr><td>响应速度</td><td class="negative">需要毫秒级撤单，VPS 可能不够</td></tr>
+        <tr><td>竞争压力</td><td class="negative">和 jjavi 等专业做市商抢单</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 五、混合策略方案 -->
+<div class="card">
+  <h2>五、混合策略具体方案</h2>
+
+  <h3 style="font-size: 16px; margin-bottom: 12px;">方案一：主 Taker + 辅 Maker（推荐）</h3>
+  <table class="param-table">
+    <thead>
+      <tr>
+        <th>维度</th>
+        <th>Taker 部分（主力 80%）</th>
+        <th>Maker 部分（补充 20%）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>进场时间</td>
+        <td><span class="tag tag-taker">D3/D2</span> 提前进场</td>
+        <td><span class="tag tag-maker">D0</span> 当天补充</td>
+      </tr>
+      <tr>
+        <td>选桶逻辑</td>
+        <td>双桶区间，模型概率 > 市场价 + 3%</td>
+        <td>单桶，只看 < 20¢ 的极端便宜桶</td>
+      </tr>
+      <tr>
+        <td>资金分配</td>
+        <td>80% bankroll（~$80）</td>
+        <td>20% bankroll（~$20）</td>
+      </tr>
+      <tr>
+        <td>订单类型</td>
+        <td>Taker：市价/吃单</td>
+        <td>Maker：限价单，挂在最佳 Bid 之上 1-2¢</td>
+      </tr>
+      <tr>
+        <td>监控要求</td>
+        <td>每小时轮询（现有架构）</td>
+        <td>需要秒级监控（新模块）</td>
+      </tr>
+      <tr>
+        <td>退出策略</td>
+        <td>持有到结算</td>
+        <td>持有到结算</td>
+      </tr>
+      <tr>
+        <td>预期收益</td>
+        <td>稳定正期望，每笔 +5-15%</td>
+        <td>高波动，但利润因子高（6.45）</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="margin: 20px 0;">
+    <h3 style="font-size: 16px; margin-bottom: 12px;">方案二：全 Maker + 提前挂单（激进）</h3>
+    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;">放弃 Taker，全面转 Maker。D3 就开始挂限价单，挂到 D0 等成交。</p>
+    <table class="param-table">
+      <tr><td style="color: var(--red);">风险</td><td>D3/D2 没有流动性，挂单 3 天不成交，资金全锁死</td></tr>
+      <tr><td style="color: var(--red);">风险</td><td>预报变化后，旧订单需要实时撤单，现有架构做不到</td></tr>
+      <tr><td style="color: var(--red);">风险</td><td>我们资金量小（$100），挂单分散后单笔占用更少</td></tr>
+      <tr><td style="color: var(--green);">机会</td><td>如果架构能跟上，可以吃到全部 Maker 红利</td></tr>
+    </table>
+  </div>
+
+  <div>
+    <h3 style="font-size: 16px; margin-bottom: 12px;">方案三：按城市/流动性分档（智能）</h3>
+    <p style="font-size: 14px; color: var(--text-muted); margin-bottom: 12px;">根据城市流动性决定策略：</p>
+    <table class="param-table">
+      <thead>
+        <tr>
+          <th>城市等级</th>
+          <th>流动性</th>
+          <th>策略</th>
+          <th>理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>🔥 London/NYC/Seoul</td>
+          <td>高（占 73% 交易量）</td>
+          <td><span class="tag tag-maker">Maker</span></td>
+          <td>订单簿厚，挂单容易成交，适合 Maker</td>
+        </tr>
+        <tr>
+          <td>⭐ Paris/Munich/Chicago</td>
+          <td>中</td>
+          <td><span class="tag tag-taker">Taker</span></td>
+          <td>有一定流动性，Taker 可进</td>
+        </tr>
+        <tr>
+          <td>🌱 Shanghai/Atlanta/其他</td>
+          <td>低</td>
+          <td><span class="tag tag-taker">Taker</span></td>
+          <td>订单簿太薄，Maker 单挂 3 天不成交</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 六、收益对比模拟 -->
+<div class="card">
+  <h2>六、收益模拟 —— 三种策略在 $100 Bankroll 下的对比</h2>
+
+  <div style="overflow-x: auto;">
+    <table class="param-table">
+      <thead>
+        <tr>
+          <th>指标</th>
+          <th style="text-align: right;">纯 Taker（当前）</th>
+          <th style="text-align: right;">纯 Maker</th>
+          <th style="text-align: right;">混合（推荐）</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>资金分配</td>
+          <td style="text-align: right;">$100 Taker</td>
+          <td style="text-align: right;">$100 Maker</td>
+          <td style="text-align: right;">$80 Taker + $20 Maker</td>
+        </tr>
+        <tr>
+          <td>日均开仓次数</td>
+          <td style="text-align: right;">3 次</td>
+          <td style="text-align: right;">挂 30 单，成交 6 次</td>
+          <td style="text-align: right;">2 次 Taker + 挂 10 单</td>
+        </tr>
+        <tr>
+          <td>单笔期望 EV</td>
+          <td style="text-align: right;">+$0.10</td>
+          <td style="text-align: right;">+$0.02（成交后）</td>
+          <td style="text-align: right;">+$0.10 / +$0.02</td>
+        </tr>
+        <tr>
+          <td>日均期望收益</td>
+          <td style="text-align: right;"><span class="positive">+$0.30</span></td>
+          <td style="text-align: right;"><span class="positive">+$0.12</span></td>
+          <td style="text-align: right;"><span class="positive">+$0.32</span></td>
+        </tr>
+        <tr>
+          <td>月期望收益（30天）</td>
+          <td style="text-align: right;"><span class="positive">+$9.00</span></td>
+          <td style="text-align: right;"><span class="positive">+$3.60</span></td>
+          <td style="text-align: right;"><span class="positive">+$9.60</span></td>
+        </tr>
+        <tr>
+          <td>月 ROI</td>
+          <td style="text-align: right;"><span class="positive">9.0%</span></td>
+          <td style="text-align: right;"><span class="positive">3.6%</span></td>
+          <td style="text-align: right;"><span class="positive">9.6%</span></td>
+        </tr>
+        <tr>
+          <td>最大回撤</td>
+          <td style="text-align: right;"><span class="negative">-15%</span></td>
+          <td style="text-align: right;"><span class="negative">-8%</span></td>
+          <td style="text-align: right;"><span class="negative">-12%</span></td>
+        </tr>
+        <tr>
+          <td>夏普比率（估）</td>
+          <td style="text-align: right;">1.2</td>
+          <td style="text-align: right;">0.8</td>
+          <td style="text-align: right;"><span class="positive">1.4</span></td>
+        </tr>
+        <tr>
+          <td>代码改造成本</td>
+          <td style="text-align: right;"><span class="positive">无</span></td>
+          <td style="text-align: right;"><span class="negative">重写交易模块</span></td>
+          <td style="text-align: right;"><span class="negative">新增 Maker 模块</span></td>
+        </tr>
+        <tr>
+          <td>运维复杂度</td>
+          <td style="text-align: right;">低</td>
+          <td style="text-align: right;"><span class="negative">高（需秒级监控）</span></td>
+          <td style="text-align: right;">中</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 七、决策边界 -->
+<div class="card">
+  <h2>七、决策边界 —— 什么情况下该选哪种策略？</h2>
+
+  <div class="matrix">
+    <div class="matrix-cell matrix-rec">
+      <h4 style="color: var(--green);">✅ 选 Taker</h4>
+      <p>当市场刚开（D3/D2），流动性一般，但模型概率明显高于市场价（edge > 8%）</p>
+    </div>
+    <div class="matrix-cell matrix-rec">
+      <h4 style="color: var(--green);">✅ 选 Maker</h4>
+      <p>当接近 D0，预报高度确定，能找到 < 20¢ 的极端便宜桶，且城市流动性好</p>
+    </div>
+    <div class="matrix-cell matrix-caution">
+      <h4 style="color: var(--amber);">⚠️ 都不做</h4>
+      <p>当 edge 不够（< 3%），或流动性太差（深度 < $100），或离散度太高</p>
+    </div>
+    <div class="matrix-cell matrix-danger">
+      <h4 style="color: var(--red);">❌ 别做 Maker</h4>
+      <p>当市场流动性差（非头部城市），或预报还有大不确定性（D3/D2），或资金太少分散不开</p>
+    </div>
+  </div>
+</div>
+
+<!-- 八、结论 -->
+<div class="summary-box">
+  <h3>结论：推荐方案一（主 Taker + 辅 Maker）</h3>
+  <ul>
+    <li><strong>不改动现有核心逻辑</strong>——Taker 部分保持现有代码运行，回测已验证正期望</li>
+    <li><strong>新增 Maker 模块作为补充</strong>——只在高流动性城市（London/NYC/Seoul）的 D0 当天挂单，吃 < 20¢ 的便宜桶</li>
+    <li><strong>Maker 资金占比不超过 20%</strong>——$20 的 Maker 资金，分散到 10-15 个挂单，被扫单了也不伤筋动骨</li>
+    <li><strong>先跑通 Maker 逻辑再放量</strong>——先 paper 模式跑 Maker 挂单，验证成交率和胜率，再逐步加资金</li>
+    <li><strong>Maker 的预期增量收益不大（月 +$0.60）</strong>，但能分散风险、平滑收益曲线</li>
+  </ul>
+  <p style="margin-top: 12px; font-size: 13px; color: var(--text-muted);">
+    核心数据来源：回测 93 个市场 / 60+ 笔交易（Taker 参数）、jjavi 链上 32,405 笔成交 / 5,437 笔订单（Maker 参数）、Polycopy 公开数据分析
+  </p>
+</div>
+
+</div>
+</body>
+</html>

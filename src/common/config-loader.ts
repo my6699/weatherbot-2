@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import { z } from 'zod';
 import type { CityId, TradingMode } from './types.js';
 import { ALL_CITIES } from './types.js';
+import { loadDisabledCitiesFromWhitelist } from '../whitelist/CityWhitelistManager.js';
 
 // 这个文件负责读取配置。
 // 量化系统里不要把参数写死在代码中，因为城市、风控、交易模式、数据源权重都需要经常调整。
@@ -34,6 +35,33 @@ const envSchema = z.object({
   DATAHUB_POLL_INTERVAL_SECONDS: z.coerce.number().positive().default(3600),
   DATA_SOURCE_FAILURE_THRESHOLD: z.coerce.number().int().positive().default(3),
 
+  // 集合预报（ensemble）接入参数：
+  //   ENSEMBLE_ENABLED：true=DataHub 拉取集合成员并用 KDE 概率与高斯融合；false=沿用纯高斯。
+  //   ENSEMBLE_MODEL：集合模型名，open-meteo ensemble API：ecmwf_ifs025（ECMWF 51 成员，
+  //     python 公认最准）/ gfs025（GFS 31 成员）/ icon_seamless（ICON 40 成员）。
+  //   ENSEMBLE_WEIGHT：融合权重（0-1），最终概率 = (1-w)×高斯 + w×集合KDE。
+  //   ENSEMBLE_BIAS_CORRECT：true=对集合成员应用该城市 ecmwf 温度档偏差平移（与确定性源同口径）。
+  //   ENSEMBLE_MAX_MEMBERS：实际使用成员数上限（0=全部）。请求体积大时用于抽样降载。
+  ENSEMBLE_ENABLED: z
+    .string()
+    .default('false')
+    .transform((value) => value.toLowerCase() === 'true'),
+  ENSEMBLE_MODEL: z.string().default('ecmwf_ifs025'),
+  ENSEMBLE_WEIGHT: z.coerce.number().min(0).max(1).default(0.5),
+  ENSEMBLE_BIAS_CORRECT: z
+    .string()
+    .default('true')
+    .transform((value) => value.toLowerCase() === 'true'),
+  ENSEMBLE_MAX_MEMBERS: z.coerce.number().int().min(0).default(0),
+
+  // DEB 偏差修正开关：true=对确定性预报源（ecmwf/gfs/icon）应用 DebCalibration 温度档偏差修正；
+  // false=使用原始预报温度，不修正。偏差表来自旧项目 collector，基于少量样本（n=12），
+  // 部分城市偏差极大（如 nyc +7.4°C），回测验证关闭后策略表现更稳定。
+  DEB_BIAS_CORRECT: z
+    .string()
+    .default('false')
+    .transform((value) => value.toLowerCase() === 'true'),
+
   POLYMARKET_CLOB_API_URL: z.string().url().default('https://clob.polymarket.com'),
   POLYMARKET_GAMMA_API_URL: z.string().url().default('https://gamma-api.polymarket.com'),
   POLYMARKET_PRIVATE_KEY: z.string().default(''),
@@ -53,11 +81,19 @@ const envSchema = z.object({
 
   MAX_POSITION_USD: z.coerce.number().positive().default(20),
   MAX_CITY_EXPOSURE_USD: z.coerce.number().positive().default(80),
+  // 凯利动态投注参数：
+  //   BANKROLL_USD：paper 模式的虚拟资金池（live 用 CLOB 真实余额，此值无效）。
+  //   KELLY_FRACTION：分数凯利系数（0-1，默认 1/4）。模型概率有误差，全凯利过度投注。
+  BANKROLL_USD: z.coerce.number().positive().default(100),
+  KELLY_FRACTION: z.coerce.number().positive().default(0.25),
   ENABLE_NO_TRADES: z
-    .string()
-    .default('false')
-    .transform((value) => value.toLowerCase() === 'true'),
-  HARD_EXIT_LOCAL_TIME: z.string().default('14:00'),
+	    .string()
+	    .default('false')
+	    .transform((value) => value.toLowerCase() === 'true'),
+	  // 黑名单城市：多个城市用逗号分隔，如 "tokyo,sao-paulo"。
+	  // 被禁城市在策略和数据采集阶段都会被跳过。
+	  DISABLED_CITIES: z.string().default(''),
+	  HARD_EXIT_LOCAL_TIME: z.string().default('14:00'),
 
   LOG_LEVEL: z.string().default('info'),
   LOG_DIR: z.string().default('logs'),
@@ -179,10 +215,38 @@ export function loadAppConfig(city?: CityId): AppConfig {
  * 加载所有已配置城市的 CityConfig 列表。
  * 用于 DataHubService 在单次 runOnce 中循环采集所有城市。
  */
-export function loadAllCityConfigs(projectRoot = getProjectRoot()): CityConfig[] {
+/**
+ * 解析 DISABLED_CITIES 环境变量，返回被禁城市 ID 集合。
+ */
+export function parseDisabledCities(env: AppEnv): Set<CityId> {
+  if (!env.DISABLED_CITIES) return new Set();
+  return new Set(
+    env.DISABLED_CITIES.split(',')
+      .map((s) => s.trim() as CityId)
+      .filter((s) => s.length > 0),
+  );
+}
+
+/**
+ * 获取生效的被禁城市集合：合并手动 DISABLED_CITIES + 自动黑白名单。
+ * 手动禁用优先级更高（自动黑名单中的城市不会被手动排除）。
+ */
+export function getEffectiveDisabledCities(projectRoot = getProjectRoot()): Set<CityId> {
   const env = loadEnv();
+  const manual = parseDisabledCities(env);
+  const autoDisabled = loadDisabledCitiesFromWhitelist(projectRoot);
+  const combined = new Set(manual);
+  for (const city of autoDisabled) {
+    combined.add(city);
+  }
+  return combined;
+}
+
+export function loadAllCityConfigs(projectRoot = getProjectRoot()): CityConfig[] {
+  const disabled = getEffectiveDisabledCities(projectRoot);
   const configs: CityConfig[] = [];
   for (const city of ALL_CITIES) {
+    if (disabled.has(city)) continue;
     try {
       configs.push(loadCityConfig(city, projectRoot));
     } catch {
