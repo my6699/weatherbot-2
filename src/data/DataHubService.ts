@@ -33,7 +33,6 @@ import { AdaptiveProbabilityEngine, type EnsembleInput } from './AdaptiveProbabi
 import { DebCalibration } from './DebCalibration.js';
 import { createModuleLogger, logError } from '../common/logger.js';
 import type { AppEnv, CityConfig } from '../common/config-loader.js';
-import { getEffectiveDisabledCities } from '../common/config-loader.js';
 import type {
   StandardizedForecast,
   SpatialCorrectionResult,
@@ -97,13 +96,9 @@ export class DataHubService {
     this.debCalibration = new DebCalibration(process.cwd());
     this.redis = createRedisClient();
 
-    // 过滤黑名单城市（手动 DISABLED_CITIES + 自动黑白名单）
-    const disabled = getEffectiveDisabledCities(process.cwd());
-    const activeConfigs = disabled.size > 0
-      ? cityConfigs.filter((c) => !disabled.has(c.city))
-      : cityConfigs;
-
-    this.cities = activeConfigs.map((city) => ({
+    // 注意：数据采集不做黑名单过滤（黑名单只影响交易开仓）。
+    // 黑名单城市仍需持续采集数据，用于未来纠偏和解除黑名单。
+    this.cities = cityConfigs.map((city) => ({
       city,
       biasLibrary: new BiasCharacterizationLibrary(city.city, process.cwd()),
       probabilityEngine: new AdaptiveProbabilityEngine(
@@ -567,9 +562,10 @@ export class DataHubService {
  * 启动 DataHub 数据生产者，定时拉取所有城市气象数据并写入 Redis。
  */
 async function main(): Promise<void> {
-  const { loadEnv, loadAllCityConfigs } = await import('../common/config-loader.js');
+  const { loadEnv, loadAllCityConfigsForCollection } = await import('../common/config-loader.js');
   const env = loadEnv();
-  const cityConfigs = loadAllCityConfigs();
+  // 采集必须覆盖全部城市（含交易黑名单城市），以持续积累纠偏数据。
+  const cityConfigs = loadAllCityConfigsForCollection();
 
   logger.info(`加载到 ${cityConfigs.length} 个城市配置`);
 

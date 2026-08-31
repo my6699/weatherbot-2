@@ -257,6 +257,27 @@ export function loadAllCityConfigs(projectRoot = getProjectRoot()): CityConfig[]
   return configs;
 }
 
+/**
+ * 采集专用的全城市加载：遍历 ALL_CITIES 加载所有城市配置，
+ * 不受交易黑名单（DISABLED_CITIES / 自动黑白名单）影响。
+ *
+ * 黑名单的本意是"预测不准时不交易"，但数据采集必须持续覆盖所有城市，
+ * 否则无法积累对黑名单城市的纠偏数据，也就永远无法解除黑名单。
+ * 因此 DataHubService（数据生产者）应使用本函数，交易侧仍用 loadAllCityConfigs。
+ */
+export function loadAllCityConfigsForCollection(projectRoot = getProjectRoot()): CityConfig[] {
+  const configs: CityConfig[] = [];
+  for (const city of ALL_CITIES) {
+    try {
+      configs.push(loadCityConfig(city, projectRoot));
+    } catch {
+      // 城市配置不存在时跳过（如还未生成 config/<city>.json 的城市）
+      continue;
+    }
+  }
+  return configs;
+}
+
 export function resolveConfigPath(projectRoot: string, relativePath: string): string {
   // JSON 配置里只写相对路径，例如 config/stations/zspd_nearby.json。
   // 这个函数负责转成绝对路径，避免不同启动目录导致读文件失败。

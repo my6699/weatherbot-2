@@ -67,7 +67,8 @@ jobs:
           DATA_MAX_AGE_SECONDS: '86400'
           DATAHUB_POLL_INTERVAL_SECONDS: '86400'
           DEB_BIAS_CORRECT: 'true'
-          DISABLED_CITIES: tokyo
+          # 注意：采集必须覆盖全部城市（含交易黑名单城市），
+          # 黑名单只影响交易开仓，不影响数据采集。故此处不设 DISABLED_CITIES。
           ENSEMBLE_ENABLED: 'false'
           # 偏差表随仓库入库（data/bias.json + residual_stats.json），
           # DebCalibration 通过 OLD_PROJECT_DATA_DIR 读取。
