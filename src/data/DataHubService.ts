@@ -486,7 +486,7 @@ export class DataHubService {
         const rawForecastedMaxTemp = this.pickDayTempC(forecast, dayOffset);
 
         let biasCorrectedMaxTemp: number;
-        if (this.env.DEB_BIAS_CORRECT) {
+        if (this.env.DEB_BIAS_CORRECT && (city.debBiasCorrect ?? true)) {
           // DEB 温度档 bias（该城市该水平段该数据源的预报温度档）。
           const debBiasC = this.debCalibration.getBiasC(
             city.city,

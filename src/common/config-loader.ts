@@ -148,6 +148,10 @@ const cityConfigSchema = z.object({
     maxPositionUsd: z.number().positive(),
     maxCityExposureUsd: z.number().positive(),
   }),
+  // 是否对该城市应用 DEB 偏差修正。缺省为 true（与全局 DEB_BIAS_CORRECT 一致）。
+  // 个别城市偏差修正反而是弊（回测显示 london/paris/wellington 关闭修正更优），
+  // 可在 config/<city>.json 显式关掉，用于城市级精细调优。
+  debBiasCorrect: z.boolean().optional(),
 });
 
 export type AppEnv = z.infer<typeof envSchema> & {
